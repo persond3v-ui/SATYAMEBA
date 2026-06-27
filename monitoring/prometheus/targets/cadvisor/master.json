@@ -1,0 +1,6 @@
+[
+  {
+    "labels": { "node": "master", "role": "master" },
+    "targets": ["cadvisor:8080"]
+  }
+]

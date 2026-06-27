@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="referrer" content="no-referrer" />
+  <title>SATYAMEBA — Notebook Cloud</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◆</span> SATYAMEBA
+      <span class="tagline">notebooks, on your own metal</span>
+    </div>
+    <nav id="nav" class="nav"></nav>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <footer class="footer">
+    <span>SATYAMEBA · self-hosted Jupyter cloud</span>
+    <span>© <span id="owner">Samaraho Mukherjee</span></span>
+  </footer>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="/src/api.js"></script>
+  <script type="module" src="/src/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+# SATYAMEBA — convenience targets. Run `make help`.
+.DEFAULT_GOAL := help
+SHELL := /bin/bash
+
+.PHONY: help secrets up down logs build ps single master worker-cmd sign verify obfuscate clean
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[1;33m%-14s\033[0m %s\n", $$1, $$2}'
+
+secrets: ## Generate .env, JWT keypair and TLS certs
+	bash scripts/gen_secrets.sh
+
+build: secrets ## Build all images
+	docker compose build
+
+up: secrets ## Start the single-host stack (https://localhost)
+	docker compose up -d
+
+single: ## Bootstrap this machine as a single-host deployment
+	bash setup/master_init.sh --single
+
+master: ## Bootstrap this machine as a Swarm master
+	bash setup/master_init.sh
+
+down: ## Stop the stack
+	docker compose down
+
+logs: ## Tail logs
+	docker compose logs -f --tail=100
+
+ps: ## Show running services
+	docker compose ps
+
+sign: ## Build & sign the ownership manifest (pass KEY=...)
+	bash scripts/sign_release.sh $(if $(KEY),--key "$(KEY)") $(if $(TAG),--tag $(TAG))
+
+verify: ## Verify the ownership manifest & signature
+	bash scripts/verify_release.sh
+
+obfuscate: ## Build the edge image with obfuscated client JS
+	docker build --build-arg OBFUSCATE=true -t satyameba/edge:latest ./frontend
+
+clean: ## Remove containers, networks and volumes (DESTRUCTIVE)
+	docker compose down -v

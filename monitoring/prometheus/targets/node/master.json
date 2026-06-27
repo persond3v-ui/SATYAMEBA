@@ -1,0 +1,6 @@
+[
+  {
+    "labels": { "node": "master", "role": "master" },
+    "targets": ["node-exporter:9100"]
+  }
+]

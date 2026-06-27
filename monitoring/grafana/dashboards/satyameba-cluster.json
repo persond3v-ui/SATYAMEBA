@@ -1,0 +1,81 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "title": "SATYAMEBA — Cluster Overview",
+  "uid": "satyameba-cluster",
+  "tags": ["satyameba"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "15s",
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(node_uname_info, instance)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries", "title": "CPU busy % (per node)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "targets": [{
+        "expr": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\",instance=~\"$node\"}[5m])) * 100)",
+        "legendFormat": "{{instance}}"
+      }]
+    },
+    {
+      "type": "timeseries", "title": "Memory used %",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "targets": [{
+        "expr": "(1 - (node_memory_MemAvailable_bytes{instance=~\"$node\"} / node_memory_MemTotal_bytes{instance=~\"$node\"})) * 100",
+        "legendFormat": "{{instance}}"
+      }]
+    },
+    {
+      "type": "timeseries", "title": "Network I/O (bytes/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [
+        { "expr": "rate(node_network_receive_bytes_total{device!~\"lo|veth.*|docker.*\",instance=~\"$node\"}[5m])", "legendFormat": "rx {{instance}}" },
+        { "expr": "rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|docker.*\",instance=~\"$node\"}[5m])", "legendFormat": "tx {{instance}}" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "Disk used %",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "targets": [{
+        "expr": "(1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\",instance=~\"$node\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay\",instance=~\"$node\"})) * 100",
+        "legendFormat": "{{instance}} {{mountpoint}}"
+      }]
+    },
+    {
+      "type": "timeseries", "title": "GPU utilisation %",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "targets": [{
+        "expr": "DCGM_FI_DEV_GPU_UTIL",
+        "legendFormat": "{{Hostname}} gpu{{gpu}}"
+      }]
+    },
+    {
+      "type": "timeseries", "title": "GPU memory used (MiB)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "decmbytes" } },
+      "targets": [{
+        "expr": "DCGM_FI_DEV_FB_USED",
+        "legendFormat": "{{Hostname}} gpu{{gpu}}"
+      }]
+    }
+  ]
+}

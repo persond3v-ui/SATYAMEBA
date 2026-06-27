@@ -1,0 +1,27 @@
+# Secrets & environment — never commit these
+.env
+.env.*
+!.env.example
+secrets/*.pem
+secrets/certs/*.key
+secrets/certs/*.crt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node (only used transiently for JS obfuscation build)
+node_modules/
+
+# Runtime / data
+*.sqlite
+*.log
+prometheus_data/
+grafana_data/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,29 @@
+SATYAMEBA — Proprietary License
+Copyright (c) 2026 Samaraho Mukherjee. All rights reserved.
+
+This software and its associated documentation files (the "Software") are the
+exclusive intellectual property of Samaraho Mukherjee ("the Owner").
+
+1. OWNERSHIP
+   The Owner retains all right, title, and interest in and to the Software,
+   including all intellectual property rights. Authorship and ownership of this
+   project, "SATYAMEBA", belong solely to Samaraho Mukherjee.
+
+2. GRANT
+   The Owner grants the operating laboratory/institution a non-exclusive,
+   non-transferable license to deploy and operate the Software for internal,
+   non-commercial research and educational use.
+
+3. RESTRICTIONS
+   You may not sublicense, sell, or redistribute the Software, nor remove or
+   alter any ownership, copyright, or cryptographic attribution notices.
+
+4. ATTRIBUTION INTEGRITY
+   The cryptographic ownership manifest (OWNERSHIP.md, SHA256SUMS and its
+   detached signature) establishes the provenance of this project. Tampering
+   with these attribution artifacts is a violation of this license.
+
+5. WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED. IN NO EVENT SHALL THE OWNER BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+   OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.

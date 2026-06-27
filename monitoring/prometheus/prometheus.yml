@@ -1,0 +1,34 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: satyameba
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: satyameba-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway:8000"]
+
+  # Per-node host metrics (CPU, memory, network, storage).
+  # Worker join script drops <hostname>.json into targets/node/.
+  - job_name: node-exporter
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/node/*.json"]
+        refresh_interval: 30s
+
+  # Per-container metrics (cAdvisor) — notebook resource usage.
+  - job_name: cadvisor
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/cadvisor/*.json"]
+        refresh_interval: 30s
+
+  # GPU metrics via NVIDIA DCGM exporter.
+  - job_name: dcgm
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/dcgm/*.json"]
+        refresh_interval: 30s

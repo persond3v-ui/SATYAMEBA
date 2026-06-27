@@ -1,0 +1,309 @@
+// SATYAMEBA SPA views & routing (hash-based, no build step required).
+import { api } from "/src/api.js";
+
+const view = document.getElementById("view");
+const nav = document.getElementById("nav");
+const toastEl = document.getElementById("toast");
+
+let me = null; // current user
+
+const GRAFANA_URL = window.SAT_GRAFANA_URL || "/grafana/";
+
+function toast(msg, kind = "") {
+  toastEl.textContent = msg;
+  toastEl.className = `toast ${kind}`;
+  setTimeout(() => (toastEl.className = "toast hidden"), 3500);
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const badge = (s) => `<span class="badge ${esc(s)}">${esc(s)}</span>`;
+const go = (hash) => (location.hash = hash);
+
+function renderNav() {
+  if (!me) { nav.innerHTML = `<a data-go="#/login">Sign in</a><a data-go="#/register">Register</a>`; return; }
+  const adminLink = me.role === "admin" ? `<a data-go="#/admin">Admin</a>` : "";
+  nav.innerHTML = `<a data-go="#/app">Workspace</a>${adminLink}<a id="logout">Logout (${esc(me.username)})</a>`;
+  nav.querySelector("#logout").onclick = async () => {
+    try { await api.logout(); } catch (_) {}
+    api.clear(); me = null; go("#/login");
+  };
+}
+
+nav.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-go]");
+  if (t) go(t.dataset.go);
+});
+
+// ---------------------------------------------------------------- auth views
+function loginView() {
+  view.innerHTML = `
+    <div class="card auth-card">
+      <h1>Welcome back</h1>
+      <p class="muted">Sign in to your SATYAMEBA workspace.</p>
+      <label>Username or email</label>
+      <input id="u" autocomplete="username" />
+      <label>Password</label>
+      <input id="p" type="password" autocomplete="current-password" />
+      <div class="btn-row"><button id="go">Sign in</button>
+        <button class="secondary" data-go="#/register">Create account</button></div>
+      <div class="err" id="err"></div>
+    </div>`;
+  view.querySelector("[data-go]").onclick = () => go("#/register");
+  view.querySelector("#go").onclick = doLogin;
+  view.querySelector("#p").onkeydown = (e) => e.key === "Enter" && doLogin();
+}
+async function doLogin() {
+  const err = view.querySelector("#err"); err.textContent = "";
+  try {
+    const t = await api.login({
+      username: view.querySelector("#u").value.trim(),
+      password: view.querySelector("#p").value,
+    });
+    api.saveTokens(t);
+    me = await api.me();
+    renderNav();
+    go(me.role === "admin" ? "#/admin" : "#/app");
+  } catch (e) { err.textContent = e.message; }
+}
+
+function registerView() {
+  view.innerHTML = `
+    <div class="card auth-card">
+      <h1>Request access</h1>
+      <p class="muted">New accounts are activated after an administrator approves them.</p>
+      <label>Full name</label><input id="fn" />
+      <label>Username</label><input id="un" placeholder="lowercase, 3–32 chars" />
+      <label>Email</label><input id="em" type="email" />
+      <label>Password</label><input id="pw" type="password" />
+      <p class="hint">Min 10 chars, mixing 3 of: lower, upper, digit, symbol.</p>
+      <div class="btn-row"><button id="go">Submit request</button>
+        <button class="secondary" data-go="#/login">Back to sign in</button></div>
+      <div class="err" id="err"></div>
+    </div>`;
+  view.querySelector("[data-go]").onclick = () => go("#/login");
+  view.querySelector("#go").onclick = async () => {
+    const err = view.querySelector("#err"); err.textContent = "";
+    try {
+      await api.register({
+        full_name: view.querySelector("#fn").value.trim(),
+        username: view.querySelector("#un").value.trim().toLowerCase(),
+        email: view.querySelector("#em").value.trim(),
+        password: view.querySelector("#pw").value,
+      });
+      toast("Request submitted — an admin will review it shortly.", "ok");
+      go("#/login");
+    } catch (e) { err.textContent = e.message; }
+  };
+}
+
+// ------------------------------------------------------------- user workspace
+async function workspaceView() {
+  view.innerHTML = `
+    <div class="card launch-hero">
+      <div class="muted">Hello ${esc(me.full_name || me.username)}</div>
+      <div class="big">Your private notebook environment</div>
+      <p class="muted">Spin up an isolated JupyterLab on the cluster. Your work is
+         saved in a private volume that follows your account.</p>
+      <div class="btn-row" style="justify-content:center">
+        <button id="launch">🚀 Launch / open notebook</button>
+        <button class="secondary" id="stop">Stop server</button>
+      </div>
+      <p class="hint" id="state"></p>
+    </div>
+    <div class="card hidden" id="frameCard">
+      <div class="iframe-wrap"><iframe id="nb" title="notebook"></iframe></div>
+    </div>`;
+  const state = view.querySelector("#state");
+  refreshNbStatus(state);
+  view.querySelector("#launch").onclick = async () => {
+    state.textContent = "Starting your server… this can take a moment on first launch.";
+    try {
+      const r = await api.launch();
+      const card = view.querySelector("#frameCard");
+      card.classList.remove("hidden");
+      view.querySelector("#nb").src = r.url;
+      state.textContent = "Server running.";
+    } catch (e) { toast(e.message, "bad"); state.textContent = e.message; }
+  };
+  view.querySelector("#stop").onclick = async () => {
+    try { await api.stopNotebook(); toast("Server stopped", "ok"); refreshNbStatus(state); }
+    catch (e) { toast(e.message, "bad"); }
+  };
+}
+async function refreshNbStatus(el) {
+  try { const s = await api.notebookStatus(); el.textContent = s.active ? "A server is currently running." : "No server running."; }
+  catch (_) {}
+}
+
+// --------------------------------------------------------------- admin views
+const adminTabs = ["Overview", "Approvals", "Users", "Nodes", "Sessions", "Monitoring", "Audit"];
+async function adminView(tab = "Overview") {
+  view.innerHTML = `
+    <h1>Admin control plane</h1>
+    <div class="tabs" id="tabs"></div>
+    <div id="panel"></div>`;
+  const tabsEl = view.querySelector("#tabs");
+  adminTabs.forEach((t) => {
+    const b = document.createElement("button");
+    b.textContent = t; b.className = t === tab ? "active" : "";
+    b.onclick = () => go(`#/admin/${t.toLowerCase()}`);
+    tabsEl.appendChild(b);
+  });
+  const panel = view.querySelector("#panel");
+  panel.innerHTML = `<p class="muted">Loading…</p>`;
+  try {
+    if (tab === "Overview") await renderOverview(panel);
+    else if (tab === "Approvals") await renderApprovals(panel);
+    else if (tab === "Users") await renderUsers(panel);
+    else if (tab === "Nodes") await renderNodes(panel);
+    else if (tab === "Sessions") await renderSessions(panel);
+    else if (tab === "Monitoring") renderMonitoring(panel);
+    else if (tab === "Audit") await renderAudit(panel);
+  } catch (e) { panel.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+async function renderOverview(p) {
+  const s = await api.stats();
+  const u = s.users || {};
+  p.innerHTML = `<div class="grid">
+    <div class="stat"><div class="n">${u.pending || 0}</div><div class="l">Pending</div></div>
+    <div class="stat"><div class="n">${u.approved || 0}</div><div class="l">Approved</div></div>
+    <div class="stat"><div class="n">${u.suspended || 0}</div><div class="l">Suspended</div></div>
+    <div class="stat"><div class="n">${s.nodes || 0}</div><div class="l">Cluster nodes</div></div>
+  </div>
+  <div class="card" style="margin-top:18px">
+    <h2>Audit chain integrity</h2>
+    <p class="muted" id="chain">checking…</p>
+  </div>`;
+  try {
+    const v = await api.auditVerify();
+    p.querySelector("#chain").innerHTML = v.intact
+      ? `${badge("approved")} Tamper-evident log intact.`
+      : `${badge("suspended")} Chain broken at entry #${v.first_tampered_id} — investigate.`;
+  } catch (_) {}
+}
+
+async function renderApprovals(p) {
+  const list = await api.pending();
+  if (!list.length) { p.innerHTML = `<div class="card">No pending requests. 🎉</div>`; return; }
+  p.innerHTML = `<div class="card"><table><thead><tr>
+    <th>User</th><th>Email</th><th>Requested</th><th>Grant role</th><th>Action</th>
+    </tr></thead><tbody>${list.map(rowFor).join("")}</tbody></table></div>`;
+  function rowFor(u) {
+    return `<tr data-id="${u.id}">
+      <td><strong>${esc(u.username)}</strong><br><span class="muted">${esc(u.full_name)}</span></td>
+      <td>${esc(u.email)}</td>
+      <td class="muted">${new Date(u.created_at).toLocaleString()}</td>
+      <td><select class="role"><option value="user">user</option><option value="admin">admin</option></select></td>
+      <td><button class="ok approve">Approve</button> <button class="danger reject">Reject</button></td>
+    </tr>`;
+  }
+  p.querySelectorAll("tr[data-id]").forEach((tr) => {
+    const id = tr.dataset.id;
+    tr.querySelector(".approve").onclick = async () => {
+      try { await api.approve(id, tr.querySelector(".role").value); toast("Approved", "ok"); adminView("Approvals"); }
+      catch (e) { toast(e.message, "bad"); }
+    };
+    tr.querySelector(".reject").onclick = async () => {
+      try { await api.reject(id); toast("Rejected", "ok"); adminView("Approvals"); }
+      catch (e) { toast(e.message, "bad"); }
+    };
+  });
+}
+
+async function renderUsers(p) {
+  const list = await api.users();
+  p.innerHTML = `<div class="card"><table><thead><tr>
+    <th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Last login</th><th>Action</th>
+    </tr></thead><tbody>${list.map(rowFor).join("")}</tbody></table></div>`;
+  function rowFor(u) {
+    const act = u.status === "suspended"
+      ? `<button class="ok reinstate">Reinstate</button>`
+      : `<button class="danger suspend">Kick off</button>`;
+    return `<tr data-id="${u.id}">
+      <td><strong>${esc(u.username)}</strong></td><td>${esc(u.email)}</td>
+      <td>${esc(u.role)}</td><td>${badge(u.status)}</td>
+      <td class="muted">${u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"}</td>
+      <td>${u.username === me.username ? '<span class="muted">you</span>' : act}</td></tr>`;
+  }
+  p.querySelectorAll("tr[data-id]").forEach((tr) => {
+    const id = tr.dataset.id;
+    const sBtn = tr.querySelector(".suspend");
+    const rBtn = tr.querySelector(".reinstate");
+    if (sBtn) sBtn.onclick = async () => { try { await api.suspend(id); toast("User kicked off", "ok"); adminView("Users"); } catch (e) { toast(e.message, "bad"); } };
+    if (rBtn) rBtn.onclick = async () => { try { await api.reinstate(id); toast("Reinstated", "ok"); adminView("Users"); } catch (e) { toast(e.message, "bad"); } };
+  });
+}
+
+async function renderNodes(p) {
+  const list = await api.nodes();
+  if (!list.length) { p.innerHTML = `<div class="card">No nodes registered yet. Run the worker join script on each machine.</div>`; return; }
+  p.innerHTML = `<div class="card"><table><thead><tr>
+    <th>Host</th><th>IP</th><th>Role</th><th>Status</th><th>GPU</th><th>Last heartbeat</th>
+    </tr></thead><tbody>${list.map((n) => `<tr>
+      <td><strong>${esc(n.hostname)}</strong></td><td>${esc(n.ip)}</td>
+      <td>${esc(n.role)}</td><td>${badge(n.status)}</td>
+      <td>${n.labels && n.labels.gpu ? esc(n.labels.gpu) : "—"}</td>
+      <td class="muted">${n.last_heartbeat ? new Date(n.last_heartbeat).toLocaleString() : "—"}</td>
+    </tr>`).join("")}</tbody></table></div>`;
+}
+
+async function renderSessions(p) {
+  const list = await api.activeSessions();
+  const active = list.filter((s) => s.active);
+  p.innerHTML = `<div class="card"><h2>Running notebooks (${active.length})</h2>
+    <table><thead><tr><th>User</th><th>Active</th><th>Last activity</th></tr></thead>
+    <tbody>${list.map((s) => `<tr><td>${esc(s.username)}</td>
+      <td>${s.active ? badge("online") : badge("offline")}</td>
+      <td class="muted">${s.last_activity ? new Date(s.last_activity).toLocaleString() : "—"}</td></tr>`).join("")}
+    </tbody></table></div>`;
+}
+
+function renderMonitoring(p) {
+  p.innerHTML = `<div class="card">
+    <h2>Cluster metrics</h2>
+    <p class="muted">Live CPU / GPU / network / storage per node, served by Grafana
+       (backed by Prometheus + node-exporter + cAdvisor + DCGM).</p>
+    <iframe class="monitor-frame" src="${esc(GRAFANA_URL)}" title="grafana"></iframe>
+  </div>`;
+}
+
+async function renderAudit(p) {
+  const list = await api.audit(200);
+  p.innerHTML = `<div class="card"><h2>Audit log</h2>
+    <table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>IP</th></tr></thead>
+    <tbody>${list.map((a) => `<tr>
+      <td class="muted">${new Date(a.timestamp).toLocaleString()}</td>
+      <td>${esc(a.actor_label)}</td><td>${esc(a.action)}</td>
+      <td>${esc(a.target)}</td><td class="muted">${esc(a.ip)}</td></tr>`).join("")}
+    </tbody></table></div>`;
+}
+
+// ------------------------------------------------------------------- router
+async function bootstrapMe() {
+  if (api.isAuthed() && !me) {
+    try { me = await api.me(); } catch (_) { api.clear(); me = null; }
+  }
+}
+async function route() {
+  await bootstrapMe();
+  renderNav();
+  const hash = location.hash || (me ? "#/app" : "#/login");
+
+  if (hash.startsWith("#/register")) return registerView();
+  if (hash.startsWith("#/login")) return me ? go("#/app") : loginView();
+
+  if (!me) return go("#/login");
+
+  if (hash.startsWith("#/admin")) {
+    if (me.role !== "admin") return go("#/app");
+    const tab = hash.split("/")[2];
+    const nice = adminTabs.find((t) => t.toLowerCase() === tab) || "Overview";
+    return adminView(nice);
+  }
+  return workspaceView();
+}
+
+window.addEventListener("hashchange", route);
+window.addEventListener("DOMContentLoaded", route);
+route();
