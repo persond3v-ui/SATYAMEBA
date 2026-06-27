@@ -18,6 +18,16 @@ NOTEBOOK_IMAGE = os.environ.get("SAT_NOTEBOOK_IMAGE", "satyameba/notebook:latest
 NETWORK_NAME = os.environ.get("SAT_NETWORK", "satyameba_net")
 GPU_ENABLED = os.environ.get("SAT_GPU_ENABLED", "false").lower() == "true"
 GPU_RESOURCE = os.environ.get("SAT_GPU_RESOURCE", "gpu")
+GATEWAY_INTERNAL_URL = os.environ.get(
+    "SAT_HUB_GATEWAY_URL", os.environ.get("SAT_GATEWAY_INTERNAL_URL", "http://gateway:8000"))
+# How GPU sharing works (matches scheduler.py):
+#   exclusive / boost → RESERVE the node's GPU (Swarm generic-resource), so the
+#                       user has the whole card while the cluster is quiet.
+#   shared            → DON'T reserve; pin to the node and expose the GPU via
+#                       NVIDIA_VISIBLE_DEVICES=all so both kernels run on it
+#                       concurrently (the cluster is busy → fair sharing).
+# This needs the nvidia runtime as Docker's default on GPU nodes
+# (scripts/setup_gpu_runtime.sh sets that). Validate on real hardware.
 DEFAULT_MEM = os.environ.get("SAT_MEM_LIMIT", "4G")
 DEFAULT_CPU = float(os.environ.get("SAT_CPU_LIMIT", "2"))
 SHARED_VOLUME = os.environ.get("SAT_SHARED_VOLUME", "satyameba-shared")
@@ -75,26 +85,63 @@ def _set_volumes(spawner, key: str) -> None:
 
 
 def pre_spawn_hook(spawner):
-    """Apply the chosen profile's resource reservation to this server."""
-    profile = (spawner.user_options or {}).get("profile", "medium")
+    """Apply the chosen profile + the scheduler's placement decision.
+
+    The gateway already decided *which node* and *whether to share* (see
+    ``scheduler.py``); we just translate that into Swarm/Docker primitives:
+      * exclusive / boost → reserve ALL GPU slices (nobody else co-locates).
+      * shared            → reserve ONE slice (concurrent co-tenancy on one GPU).
+      * node pin          → constrain placement to the chosen hostname.
+    """
+    opts = spawner.user_options or {}
+    profile = opts.get("profile", "medium")
+    mode = opts.get("mode", "exclusive")          # exclusive | shared | boost
+    pin = opts.get("node")                         # hostname to pin to (or None)
     p = PROFILES.get(profile, PROFILES["medium"])
     spawner.mem_limit = p["mem"]
     spawner.cpu_limit = float(p["cpu"])
-    want_gpu = bool(p["gpu"]) and GPU_ENABLED
+    want_gpu = (bool(p["gpu"]) or mode == "boost") and GPU_ENABLED
+    reserve_gpu = want_gpu and mode in ("exclusive", "boost")   # vs. concurrent share
+
+    # --- environment the notebook (and its traffic widget / DDP helper) sees ---
+    env = dict(spawner.environment or {})
+    env["SATYAMEBA_NODE"] = pin or ""
+    env["SATYAMEBA_MODE"] = mode
+    env["SATYAMEBA_SHARED"] = "1" if mode == "shared" else "0"
+    env["SATYAMEBA_GATEWAY_URL"] = GATEWAY_INTERNAL_URL
+    if opts.get("traffic_token"):
+        env["SATYAMEBA_TRAFFIC_TOKEN"] = opts["traffic_token"]
+    if want_gpu and not reserve_gpu:
+        # Shared GPU: no Swarm reservation, so expose the card explicitly.
+        env["NVIDIA_VISIBLE_DEVICES"] = "all"
+    elif not want_gpu:
+        # default-runtime=nvidia would otherwise leak the GPU into CPU notebooks.
+        env["NVIDIA_VISIBLE_DEVICES"] = "void"
+    if mode == "boost":
+        ddp_nodes = opts.get("ddp_nodes") or ([pin] if pin else [])
+        env["SATYAMEBA_BOOST"] = "1"
+        env["SATYAMEBA_DDP_NNODES"] = str(opts.get("gpus") or len(ddp_nodes) or 1)
+        env["SATYAMEBA_DDP_NODES"] = ",".join(ddp_nodes)
+        env["SATYAMEBA_DDP_RDZV_ENDPOINT"] = opts.get("rdzv", "")
+    spawner.environment = env
 
     if SPAWNER == "swarm":
         spec = {"mem_limit": _mem_bytes(p["mem"]), "cpu_limit": int(float(p["cpu"]) * 1e9)}
+        constraints = []
         if want_gpu:
-            spec["generic_resources"] = {GPU_RESOURCE: int(p["gpu"])}
-            spawner.extra_placement_spec = {"constraints": ["node.labels.satyameba.gpu==true"]}
-        else:
-            spawner.extra_placement_spec = {}
+            constraints.append("node.labels.satyameba.gpu==true")
+            if reserve_gpu:
+                spec["generic_resources"] = {GPU_RESOURCE: 1}  # claim the whole card
+        if pin:
+            constraints.append(f"node.hostname=={pin}")
+        spawner.extra_placement_spec = {"constraints": constraints} if constraints else {}
         spawner.extra_resources_spec = spec
     else:
         hc = dict(spawner.extra_host_config or {})
         if want_gpu:
+            # On a single host the GPU is shared by co-resident kernels natively.
             hc["device_requests"] = [
-                {"Driver": "nvidia", "Count": int(p["gpu"]), "Capabilities": [["gpu"]]}
+                {"Driver": "nvidia", "Count": -1, "Capabilities": [["gpu"]]}
             ]
         else:
             hc.pop("device_requests", None)
@@ -115,8 +162,8 @@ def pre_spawn_hook(spawner):
             spawner.log.warning("could not prepare host workdir for %s: %s",
                                 spawner.user.name, exc)
 
-    spawner.log.info("spawning %s (store=%s) profile=%s (%s, %s cpu, gpu=%s)",
-                     spawner.user.name, key, profile, p["mem"], p["cpu"], want_gpu)
+    spawner.log.info("spawning %s (store=%s) profile=%s mode=%s node=%s gpu=%s reserved=%s",
+                     spawner.user.name, key, profile, mode, pin or "-", want_gpu, reserve_gpu)
 
 
 # --- Authenticator: delegate to the SATYAMEBA gateway -----------------------

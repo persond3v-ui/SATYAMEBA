@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "satyameba-traffic"
+version = "0.1.0"
+description = "SATYAMEBA in-notebook traffic widget (server extension)"
+requires-python = ">=3.9"
+dependencies = ["jupyter_server>=2"]
+
+[tool.setuptools]
+packages = ["satyameba_traffic"]
+
+[tool.setuptools.package-data]
+satyameba_traffic = ["static/*.js"]
+
+# Auto-enable the server extension on install.
+[tool.setuptools.data-files]
+"etc/jupyter/jupyter_server_config.d" = ["jupyter-config/satyameba_traffic.json"]

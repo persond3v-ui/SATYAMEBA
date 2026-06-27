@@ -98,6 +98,32 @@ def decode_token(token: str) -> dict:
     )
 
 
+def make_traffic_token(username: str, ttl_seconds: int = 12 * 3600) -> str:
+    """A narrow, read-only token handed to the user's notebook container so its
+    in-Lab traffic widget can poll *only that user's* placement. It can do
+    nothing else — no session, no mutations — so leaking it from the container
+    (which the user already controls) is harmless."""
+    key, alg = _signing_material()
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": username, "type": "traffic",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
+        "iss": "satyameba-gateway",
+    }
+    return jwt.encode(payload, key, algorithm=alg)
+
+
+def verify_traffic_token(token: str) -> str | None:
+    """Return the username for a valid traffic token, else None."""
+    try:
+        key, alg = _verifying_material()
+        p = jwt.decode(token, key, algorithms=[alg], issuer="satyameba-gateway")
+    except Exception:
+        return None
+    return p.get("sub") if p.get("type") == "traffic" else None
+
+
 def new_jti() -> str:
     return secrets.token_urlsafe(24)
 

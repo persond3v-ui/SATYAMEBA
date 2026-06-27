@@ -1,0 +1,111 @@
+/* ============================================================================
+   SATYAMEBA — "neon / cyberpunk" JupyterLab theme.
+   Loaded by JupyterLab's supported custom-CSS feature (c.LabApp.custom_css=True
+   reads {jupyter_config_dir}/custom/custom.css). Pure CSS: it restyles, it does
+   not touch behaviour, so it can never break the kernel — failsafe by design.
+   Palette: near-black canvas, cyan → magenta → violet animated gradients.
+   ========================================================================== */
+
+:root {
+  --sat-bg:        #0a0b14;
+  --sat-bg-2:      #11131f;
+  --sat-panel:     #141627;
+  --sat-cyan:      #22d3ee;
+  --sat-magenta:   #ec4899;
+  --sat-violet:    #8b5cf6;
+  --sat-text:      #e6e8f0;
+  --sat-grad: linear-gradient(120deg, var(--sat-cyan), var(--sat-magenta), var(--sat-violet), var(--sat-cyan));
+}
+
+/* Animated gradient that the shiny borders ride along. */
+@keyframes sat-flow { 0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; } }
+@keyframes sat-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+
+/* ---- Base surfaces -------------------------------------------------------- */
+body, .jp-Notebook, #main, .jp-LabShell {
+  background: radial-gradient(1200px 800px at 80% -10%, #161a2e 0%, var(--sat-bg) 60%) !important;
+  color: var(--sat-text);
+}
+:root {
+  --jp-layout-color0: var(--sat-bg);
+  --jp-layout-color1: var(--sat-bg-2);
+  --jp-layout-color2: var(--sat-panel);
+  --jp-brand-color1: var(--sat-violet);
+  --jp-accent-color1: var(--sat-cyan);
+}
+
+/* ---- Top bar: a shiny animated gradient underline ------------------------- */
+#jp-top-panel, .jp-TopBar {
+  background: linear-gradient(180deg, #0d0f1c, #0a0b14) !important;
+  border-bottom: 2px solid transparent !important;
+  border-image: var(--sat-grad) 1 !important;
+  background-size: 300% 100%;
+  animation: sat-flow 8s linear infinite;
+}
+
+/* ---- The signature: shiny animated gradient borders on cells -------------- */
+.jp-Cell {
+  position: relative;
+  border-radius: 12px;
+  margin: 8px 6px;
+  background: var(--sat-panel);
+  transition: transform .12s ease, box-shadow .2s ease;
+}
+.jp-Cell::before {
+  content: "";
+  position: absolute; inset: -2px;
+  border-radius: 14px;
+  padding: 2px;
+  background: var(--sat-grad);
+  background-size: 300% 300%;
+  animation: sat-flow 6s linear infinite;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: .35;
+  pointer-events: none;
+}
+/* The selected/active cell lights its border fully and glows. */
+.jp-Cell.jp-mod-active::before { opacity: 1; }
+.jp-Cell.jp-mod-active {
+  box-shadow: 0 0 22px -4px var(--sat-violet), 0 0 40px -10px var(--sat-cyan);
+}
+
+/* ---- Buttons / toolbar ---------------------------------------------------- */
+.jp-Toolbar { background: transparent !important; }
+.jp-ToolbarButtonComponent:hover { box-shadow: 0 0 10px -2px var(--sat-cyan); border-radius: 8px; }
+button.jp-mod-styled, .jp-Dialog-button {
+  background: linear-gradient(90deg, var(--sat-violet), var(--sat-magenta)) !important;
+  border: none !important; color: #fff !important; border-radius: 8px !important;
+}
+
+/* ---- Run / busy kernel indicator pulses ----------------------------------- */
+.jp-Notebook-ExecutionIndicator[data-status="busy"] { animation: sat-pulse 1.1s ease-in-out infinite; }
+
+/* ---- Scrollbars ----------------------------------------------------------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--sat-grad); background-size: 300% 300%;
+  animation: sat-flow 10s linear infinite; border-radius: 8px;
+}
+
+/* ---- SATYAMEBA traffic strip (injected by the satyameba_traffic extension) - */
+#satyameba-strip {
+  position: fixed; right: 14px; bottom: 14px; z-index: 10000;
+  display: flex; gap: 10px; align-items: center;
+  padding: 8px 14px; border-radius: 12px;
+  background: rgba(20,22,39,.86); backdrop-filter: blur(8px);
+  color: var(--sat-text); font: 12px/1.3 system-ui, sans-serif;
+  border: 1.5px solid transparent;
+  border-image: var(--sat-grad) 1; background-clip: padding-box;
+  box-shadow: 0 8px 30px -10px #000;
+}
+#satyameba-strip .dot { width: 10px; height: 10px; border-radius: 50%; }
+#satyameba-strip .dot.idle { background: #22d3ee; box-shadow: 0 0 10px #22d3ee; }
+#satyameba-strip .dot.exclusive { background: #34d399; box-shadow: 0 0 10px #34d399; }
+#satyameba-strip .dot.shared { background: #f59e0b; box-shadow: 0 0 10px #f59e0b; animation: sat-pulse 1.2s infinite; }
+#satyameba-strip .dot.boost { background: #ec4899; box-shadow: 0 0 12px #ec4899; animation: sat-pulse .8s infinite; }
+#satyameba-strip .sat-metric { opacity: .9; }
+#satyameba-strip button {
+  cursor: pointer; border: none; border-radius: 8px; padding: 4px 10px; color: #fff;
+  background: linear-gradient(90deg, var(--sat-violet), var(--sat-magenta));
+}

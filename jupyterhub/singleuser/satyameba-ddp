@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""satyameba-ddp — one-command distributed training launcher.
+
+Usage (inside a boosted notebook's terminal):
+
+    satyameba-ddp train.py --epochs 50 --batch 256
+
+It wraps ``torchrun`` with the rendezvous SATYAMEBA injected at spawn time, so a
+GPU-boost job fans out across every GPU node the scheduler reserved for you:
+
+    SATYAMEBA_DDP_NNODES         how many nodes the boost spans
+    SATYAMEBA_DDP_RDZV_ENDPOINT  host:port of rank-0's c10d rendezvous
+    SATYAMEBA_DDP_NODES          comma-separated hostnames in the job
+    SATYAMEBA_BOOST=1            set when a boost is active
+
+Single-node multi-GPU works out of the box. For true cross-node DDP the peer
+nodes run the matching rank agent (installed by the GPU worker setup); your code
+just needs to be DDP-aware (torch.distributed / DistributedDataParallel).
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+
+    if shutil.which("torchrun") is None:
+        sys.stderr.write(
+            "torchrun not found — this image was built without GPU/torch support "
+            "(build the notebook image with SAT_GPU_BUILD=true).\n")
+        return 2
+
+    nnodes = os.environ.get("SATYAMEBA_DDP_NNODES", "1")
+    rdzv = os.environ.get("SATYAMEBA_DDP_RDZV_ENDPOINT", "")
+    nproc = os.environ.get("SATYAMEBA_NPROC_PER_NODE", "auto")
+    boost = os.environ.get("SATYAMEBA_BOOST") == "1"
+
+    cmd = ["torchrun", f"--nproc_per_node={nproc}"]
+    if boost and rdzv and nnodes != "1":
+        cmd += [f"--nnodes={nnodes}", "--rdzv_backend=c10d",
+                "--rdzv_id=satyameba", f"--rdzv_endpoint={rdzv}"]
+        nodes = os.environ.get("SATYAMEBA_DDP_NODES", "")
+        sys.stderr.write(f"[satyameba-ddp] boosted job across {nnodes} node(s): {nodes}\n")
+    else:
+        cmd += ["--standalone", "--nnodes=1"]
+        sys.stderr.write("[satyameba-ddp] single-node run "
+                         "(no active boost — request one for multi-node training)\n")
+    cmd += args
+    sys.stderr.write("[satyameba-ddp] exec: " + " ".join(cmd) + "\n")
+    os.execvp(cmd[0], cmd)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

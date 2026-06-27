@@ -26,6 +26,7 @@ from .. import audit, hub, scheduler
 from ..config import get_settings
 from ..database import get_db
 from ..deps import get_current_user
+from ..security import make_traffic_token, verify_traffic_token
 from ..models import (
     BoostStatus,
     GpuBoostRequest,
@@ -90,6 +91,8 @@ async def launch(request: Request, user: User = Depends(get_current_user), db=De
         "mode": plan.mode,
         "share_gpu": plan.shared,
         "gpus": plan.gpus,
+        # narrow read-only token so the in-Lab traffic widget can poll placement
+        "traffic_token": make_traffic_token(user.username),
     }
     if plan.node:
         options["node"] = plan.node
@@ -171,17 +174,15 @@ async def nb_status(user: User = Depends(get_current_user)):
     return mine or {"username": user.username, "active": False}
 
 
-@router.get("/cluster")
-def cluster(user: User = Depends(get_current_user), db=Depends(get_db)):
-    """Live placement view for the workspace + in-notebook traffic widget:
-    per-node occupancy, who you're sharing with, and your current mode."""
+def _build_cluster(db, username: str) -> dict:
+    """Live placement view: per-node occupancy + who `username` is sharing with."""
     nodes = scheduler.online_nodes(db)
     runs = scheduler.active_runs(db)
     by_host: dict[str, list[NotebookRun]] = {}
     for r in runs:
         by_host.setdefault(r.node_hostname, []).append(r)
 
-    mine = _active_run(db, user)
+    mine = next((r for r in runs if r.username == username), None)
     node_list = []
     for n in nodes:
         occ = by_host.get(n.hostname, [])
@@ -197,7 +198,7 @@ def cluster(user: User = Depends(get_current_user), db=Depends(get_db)):
     sharing_with = 0
     busy = "idle"
     if mine and mine.node_hostname:
-        peers = [r for r in by_host.get(mine.node_hostname, []) if r.user_id != user.id]
+        peers = [r for r in by_host.get(mine.node_hostname, []) if r.username != username]
         sharing_with = len(peers)
         busy = "shared" if sharing_with else ("boost" if mine.mode == "boost" else "exclusive")
 
@@ -215,6 +216,22 @@ def cluster(user: User = Depends(get_current_user), db=Depends(get_db)):
             "status": busy,
         },
     }
+
+
+@router.get("/cluster")
+def cluster(user: User = Depends(get_current_user), db=Depends(get_db)):
+    return _build_cluster(db, user.username)
+
+
+@router.get("/traffic")
+def traffic(request: Request, db=Depends(get_db)):
+    """Read-only placement feed for the in-Lab traffic widget. Authenticated by
+    the narrow traffic token (header), not a user session."""
+    tok = request.headers.get("x-sat-traffic-token", "")
+    username = verify_traffic_token(tok)
+    if not username:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid traffic token")
+    return _build_cluster(db, username)
 
 
 # Named PromQL for the per-user resource widget (RAM/VRAM/GPU/CPU).

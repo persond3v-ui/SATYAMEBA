@@ -32,8 +32,18 @@ if os.path.exists(path):
     except Exception:
         data = {}
 data["node-generic-resources"] = [f"{res}={u}" for u in uuids]
+# Make the nvidia runtime the DEFAULT so concurrent-share notebooks (which take
+# no Swarm GPU reservation) can still see the card via NVIDIA_VISIBLE_DEVICES.
+# Exclusive notebooks reserve the generic resource instead. CPU notebooks get
+# NVIDIA_VISIBLE_DEVICES=void so the default runtime doesn't leak the GPU.
+runtimes = data.get("runtimes", {})
+if "nvidia" in runtimes or os.path.exists("/usr/bin/nvidia-container-runtime"):
+    data.setdefault("runtimes", {}).setdefault(
+        "nvidia", {"path": "nvidia-container-runtime", "runtimeArgs": []})
+    data["default-runtime"] = "nvidia"
 json.dump(data, open(path, "w"), indent=2)
-print(f"[gpu] wrote {path} advertising {len(uuids)} GPU(s) as resource '{res}'")
+print(f"[gpu] wrote {path} advertising {len(uuids)} GPU(s) as resource '{res}' "
+      f"(default-runtime=nvidia for concurrent sharing)")
 PY
 
 # Enable the swarm-resource mapping in the nvidia container runtime config.
