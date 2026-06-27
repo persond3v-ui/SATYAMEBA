@@ -41,6 +41,13 @@ def _ip(request: Request) -> str:
     return client_ip(request)
 
 
+def _ensure_not_owner(user: User) -> None:
+    """The owner account is un-removable: no admin action may touch it."""
+    if user.role == UserRole.owner:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "The owner account is protected and cannot be modified.")
+
+
 @router.get("/users", response_model=list[UserOut])
 def list_users(
     status_filter: str | None = Query(default=None, alias="status"),
@@ -75,6 +82,9 @@ async def approve(
     user = db.get(User, payload.user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    _ensure_not_owner(user)
+    if payload.role == UserRole.owner.value:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "The owner role cannot be granted.")
     user.status = UserStatus.approved
     user.role = UserRole(payload.role) if payload.role in (r.value for r in UserRole) else UserRole.user
     user.approved_by = admin.id
@@ -104,6 +114,7 @@ def reject(
     user = db.get(User, payload.user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    _ensure_not_owner(user)
     user.status = UserStatus.rejected
     db.commit()
     audit.record(db, action="admin.reject_user", actor_id=admin.id, actor_label=admin.username,
@@ -121,6 +132,7 @@ async def suspend(
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    _ensure_not_owner(user)
     if user.id == admin.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot suspend yourself")
     user.status = UserStatus.suspended
@@ -147,6 +159,7 @@ async def reinstate(
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    _ensure_not_owner(user)
     user.status = UserStatus.approved
     db.commit()
     try:
@@ -165,6 +178,7 @@ def reset_2fa(user_id: str, request: Request,
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    _ensure_not_owner(user)
     user.totp_enabled = False
     user.totp_secret = None
     db.commit()
@@ -185,6 +199,7 @@ def reset_password(user_id: str, request: Request,
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    _ensure_not_owner(user)
     temp = _secrets.token_urlsafe(12)
     user.password_hash = hash_password(temp)
     user.must_change_password = True
@@ -206,6 +221,7 @@ async def delete_user(user_id: str, request: Request,
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    _ensure_not_owner(user)
     if user.id == admin.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot delete yourself")
     username = user.username

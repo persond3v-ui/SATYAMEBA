@@ -122,7 +122,9 @@ def _ensure_bootstrap_admin() -> None:
     db = SessionLocal()
     try:
         has_admin = db.execute(
-            select(func.count()).select_from(User).where(User.role == UserRole.admin)
+            select(func.count()).select_from(User).where(
+                User.role.in_([UserRole.admin, UserRole.owner])
+            )
         ).scalar_one()
         if has_admin:
             return
@@ -130,11 +132,11 @@ def _ensure_bootstrap_admin() -> None:
         admin_user = User(
             email=settings.bootstrap_admin_email,
             username=settings.bootstrap_admin_username,
-            full_name="SATYAMEBA Administrator",
+            full_name="SATYAMEBA Owner — Samaraho Mukherjee",
             password_hash=hash_password(password),
-            role=UserRole.admin,
+            role=UserRole.owner,            # the un-removable owner account
             status=UserStatus.approved,
-            must_change_password=True,  # force rotation of the seeded password
+            must_change_password=True,      # force rotation of the seeded password
         )
         db.add(admin_user)
         try:

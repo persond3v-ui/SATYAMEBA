@@ -42,6 +42,7 @@ class UserStatus(str, enum.Enum):
 class UserRole(str, enum.Enum):
     user = "user"
     admin = "admin"
+    owner = "owner"   # the un-removable super-admin (Samaraho Mukherjee)
 
 
 class User(Base):

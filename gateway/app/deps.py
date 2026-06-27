@@ -65,9 +65,10 @@ def get_current_user(pair: tuple[User, UserSession] = Depends(get_current_sessio
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    if user.role != UserRole.admin:
+    if user.role not in (UserRole.admin, UserRole.owner):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Administrator privileges required")
     # Optionally require admins to have enrolled TOTP before any privileged action.
-    if settings.require_admin_2fa and not user.totp_enabled:
+    # The owner is exempt (their break-glass path is the out-of-band tunnel).
+    if settings.require_admin_2fa and user.role != UserRole.owner and not user.totp_enabled:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "admin_2fa_required")
     return user

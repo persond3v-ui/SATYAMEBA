@@ -14,6 +14,7 @@ the reserved CPU/RAM/GPU come from the chosen profile (payload-aware).
 """
 from __future__ import annotations
 
+import hashlib
 import secrets
 from datetime import timedelta
 from urllib.parse import quote
@@ -44,9 +45,13 @@ async def launch(request: Request, user: User = Depends(get_current_user), db=De
     if profile not in VALID_PROFILES:
         profile = "medium"
 
+    # Storage id: a meaningless, stable hash of the IMMUTABLE account id. Folder
+    # names reveal nothing, and a re-registered username (new id) can never
+    # inherit a deleted user's files (fixes N2/N3).
+    sid = hashlib.sha256(user.id.encode()).hexdigest()[:16]
     try:
         await hub.ensure_user(user.username)
-        await hub.start_server(user.username, options={"profile": profile})
+        await hub.start_server(user.username, options={"profile": profile, "sid": sid})
     except Exception:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,

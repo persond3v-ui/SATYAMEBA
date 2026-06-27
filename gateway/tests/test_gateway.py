@@ -176,6 +176,25 @@ def test_audit_chain_intact(client, admin):
     assert v.status_code == 200 and v.json()["intact"] is True
 
 
+def test_owner_is_protected(client, admin):
+    at, sk = admin["access_token"], admin["signing_key"]
+    me = client.get("/api/auth/me", headers=_hdr(at)).json()
+    assert me["role"] == "owner"
+    oid = me["id"]
+    # owner cannot be suspended or deleted by anyone
+    sp = f"/api/admin/users/{oid}/suspend"
+    assert client.post(sp, headers=_sign(at, sk, "POST", sp, b""), content=b"").status_code == 403
+    dp = f"/api/admin/users/{oid}"
+    assert client.request("DELETE", dp, headers=_sign(at, sk, "DELETE", dp, b""),
+                          content=b"").status_code == 403
+    # nobody can be promoted to owner
+    uid = make_user(client, admin, "wannabe")
+    body = json.dumps({"user_id": uid, "role": "owner"}).encode()
+    assert client.post("/api/admin/users/approve",
+                       headers=_sign(at, sk, "POST", "/api/admin/users/approve", body),
+                       content=body).status_code == 403
+
+
 def test_metrics_endpoint(client):
     client.get("/healthz")
     assert "satyameba_http_requests_total" in client.get("/metrics").text

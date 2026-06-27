@@ -27,13 +27,29 @@ plug-n-play.
 - **No upload cap** — bring multi-GB datasets straight into your private `/work`.
 - **Shared dataset volume** at `/home/jovyan/shared` for whole-lab data.
 - **Your work follows you** — with NFS storage mode, files persist and reappear
-  no matter which node you land on next; idle servers are auto-culled to free GPUs.
+  no matter which node you land on next. Logging out tears the notebook down;
+  idle servers are auto-culled to free GPUs.
+- **Private, encrypted storage** — each user's data lives in a per-account folder
+  with a **meaningless hashed name** and strict `0700` perms, encrypted at rest;
+  a re-used username can never inherit a deleted account's files.
+
+### 👑 Owner control & break-glass
+- **Un-removable Owner role** (the project owner) — no admin can demote, suspend,
+  or delete it, and nobody can self-promote to owner.
+- **Out-of-band super-user tunnel** (`owner-setup/`) — Tailscale (WireGuard,
+  outbound-only, **no router config**), SSO sign-in, reachable from anywhere; a
+  separate control plane that survives a hostile co-admin.
+- **Tamper response** — if the Owner account or the tunnel is stripped, the
+  platform **seals** (halts + locks) and, when armed, **crypto-erases** all data
+  after a grace window. Owner-triggered **panic** wipe too. *(See the honest
+  cautions in [`owner-setup/README.md`](owner-setup/README.md).)*
 
 ### 👥 Users & administration
 - **Approval-gated onboarding** — anyone can register, but an **admin must
   approve** before login. Reject spammers in a click.
 - **Absolute admin control** — suspend/“kick off” a user (revokes their sessions
-  and kills their notebook instantly), reinstate, grant admin.
+  and kills their notebook instantly), reinstate, grant admin, **reset 2FA /
+  password, delete** — the Owner account excepted.
 - **Admin dashboard** — pending approvals, all users, cluster nodes, live running
   sessions, monitoring, and a full audit log — in one place.
 - **Tamper-evident audit log** — every privileged action is hash-chained and

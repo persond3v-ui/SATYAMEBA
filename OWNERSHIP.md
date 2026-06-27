@@ -4,6 +4,12 @@
 **Owner / Author:** **Samaraho Mukherjee**
 **Copyright:** © 2026 Samaraho Mukherjee. All rights reserved.
 
+Ownership is enforced technically as well as legally:
+- An **un-removable Owner role** in the platform (Samaraho Mukherjee) that no
+  other admin can demote, suspend, or delete.
+- An out-of-band **owner break-glass tunnel** + tamper response (`owner-setup/`).
+- This signed integrity manifest binding the source to the Owner.
+
 ## Cryptographic attribution
 
 The ownership of this codebase is established by a signed integrity manifest:

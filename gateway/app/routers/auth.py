@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import audit
+from .. import audit, hub
 from ..config import get_settings
 from ..database import get_db
 from ..deps import get_current_session
@@ -196,10 +196,15 @@ def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get
 
 
 @router.post("/logout", status_code=204)
-def logout(request: Request, pair=Depends(get_current_session), db: Session = Depends(get_db)):
+async def logout(request: Request, pair=Depends(get_current_session), db: Session = Depends(get_db)):
     user, session = pair
     session.revoked = True
     db.commit()
+    # The browser session is over — tear down the user's notebook server too.
+    try:
+        await hub.stop_server(user.username)
+    except Exception:
+        pass
     audit.record(db, action="user.logout", actor_id=user.id, actor_label=user.username,
                  ip=_client_ip(request))
     return None

@@ -8,6 +8,7 @@
 # Resource PROFILES make scheduling payload-aware: the user picks a size in the
 # SPA, the gateway passes it as a spawn option, and we reserve CPU/RAM/GPU
 # accordingly so Swarm distributes work by the requested footprint.
+import hashlib
 import os
 
 c = get_config()  # noqa: F821
@@ -51,6 +52,28 @@ def _mem_bytes(s: str) -> int:
     return int(float(s[:-1]) * mult) if s[-1:] in "GMK" else int(s)
 
 
+def _storage_key(spawner) -> str:
+    """Meaningless, stable per-account folder name. Uses the gateway-supplied
+    'sid' (hash of the IMMUTABLE account id) so names reveal nothing and a reused
+    username can never inherit a deleted account's files (N2/N3)."""
+    sid = (spawner.user_options or {}).get("sid")
+    if not sid:
+        sid = hashlib.sha256(spawner.user.name.encode()).hexdigest()[:16]
+    return f"u-{sid}"
+
+
+def _set_volumes(spawner, key: str) -> None:
+    if USER_STORAGE_MODE == "host":
+        vols = {os.path.join(USER_HOST_BASE, key): "/home/jovyan/work"}
+        if SHARED_HOST_PATH:
+            vols[SHARED_HOST_PATH] = {"bind": "/home/jovyan/shared", "mode": SHARED_MODE}
+    else:
+        vols = {f"satyameba-{key}": "/home/jovyan/work"}
+        if SHARED_VOLUME:
+            vols[SHARED_VOLUME] = {"bind": "/home/jovyan/shared", "mode": SHARED_MODE}
+    spawner.volumes = vols
+
+
 def pre_spawn_hook(spawner):
     """Apply the chosen profile's resource reservation to this server."""
     profile = (spawner.user_options or {}).get("profile", "medium")
@@ -80,20 +103,20 @@ def pre_spawn_hook(spawner):
             hc["storage_opt"] = {"size": f"{STORAGE_LIMIT_GB}G"}
         spawner.extra_host_config = hc
 
-    # In host/NFS mode, pre-create the user's work dir with the notebook UID so
-    # the unprivileged jovyan user can write to it (the hub bind-mounts the NFS
-    # root, so this dir is visible on every node).
+    # Per-account, hashed storage (meaningless name; immutable id).
+    key = _storage_key(spawner)
+    _set_volumes(spawner, key)
     if USER_STORAGE_MODE == "host":
         try:
-            d = os.path.join(USER_HOST_BASE, spawner.user.name)
+            d = os.path.join(USER_HOST_BASE, key)
             os.makedirs(d, exist_ok=True)
             os.chown(d, NB_UID, NB_GID)
         except Exception as exc:
             spawner.log.warning("could not prepare host workdir for %s: %s",
                                 spawner.user.name, exc)
 
-    spawner.log.info("spawning %s with profile=%s (%s, %s cpu, gpu=%s)",
-                     spawner.user.name, profile, p["mem"], p["cpu"], want_gpu)
+    spawner.log.info("spawning %s (store=%s) profile=%s (%s, %s cpu, gpu=%s)",
+                     spawner.user.name, key, profile, p["mem"], p["cpu"], want_gpu)
 
 
 # --- Authenticator: delegate to the SATYAMEBA gateway -----------------------
@@ -131,30 +154,18 @@ c.Spawner.args = [
     "--ServerApp.tornado_settings={'headers':{'Content-Security-Policy':\"frame-ancestors 'self'\"}}",
 ]
 
-if USER_STORAGE_MODE == "host":
-    # Bind-mount from a shared (NFS) host path identical on every node.
-    _volumes = {os.path.join(USER_HOST_BASE, "{username}"): "/home/jovyan/work"}
-    if SHARED_HOST_PATH:
-        _volumes[SHARED_HOST_PATH] = {"bind": "/home/jovyan/shared", "mode": SHARED_MODE}
-else:
-    # Node-local named volumes (fine for single-host).
-    _volumes = {"satyameba-user-{username}": "/home/jovyan/work"}
-    if SHARED_VOLUME:
-        _volumes[SHARED_VOLUME] = {"bind": "/home/jovyan/shared", "mode": SHARED_MODE}
-
+# Volumes are set per-spawn in pre_spawn_hook (hashed per-account storage key).
 if SPAWNER == "swarm":
     c.JupyterHub.spawner_class = "dockerspawner.SwarmSpawner"
     c.SwarmSpawner.image = NOTEBOOK_IMAGE
     c.SwarmSpawner.network_name = NETWORK_NAME
     c.SwarmSpawner.remove = True
-    c.SwarmSpawner.volumes = _volumes
 else:
     c.JupyterHub.spawner_class = "dockerspawner.DockerSpawner"
     c.DockerSpawner.image = NOTEBOOK_IMAGE
     c.DockerSpawner.network_name = NETWORK_NAME
     c.DockerSpawner.remove = True
     c.DockerSpawner.use_internal_ip = True
-    c.DockerSpawner.volumes = _volumes
     # Baseline isolation hardening (profile hook layers resources on top).
     _base_hc = {
         "cap_drop": ["ALL"],
@@ -168,8 +179,10 @@ else:
 c.JupyterHub.services.append(
     {
         "name": "idle-culler",
+        # Reclaim abandoned servers quickly (logout already tears down explicitly;
+        # this only culls *idle* kernels, so active training is never killed).
         "command": ["python3", "-m", "jupyterhub_idle_culler",
-                    "--timeout=3600", "--cull-every=300"],
+                    "--timeout=1200", "--cull-every=120"],
     }
 )
 c.JupyterHub.load_roles.append(
