@@ -1,9 +1,10 @@
 """Shared store for rate-limit counters and replay nonces.
 
-Backed by Redis when ``SAT_REDIS_URL`` is set, so limits and replay protection
-hold across multiple gateway replicas (fixes the per-replica gap). Falls back to
-an in-process implementation when Redis is not configured, which is correct for
-a single replica.
+Uses Redis when ``SAT_REDIS_URL`` is set so limits/replay protection hold across
+gateway replicas. The Redis connection is established **lazily and re-established
+on failure** — so if Redis isn't ready when a replica boots (or briefly drops),
+the replica falls back to in-process for those calls and automatically returns to
+Redis once it's reachable (rather than degrading to in-memory forever).
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ except Exception:  # pragma: no cover
     _redis_lib = None
 
 
-class _MemoryBackend:
+class _Memory:
     def __init__(self) -> None:
         self._hits: dict[str, deque[float]] = defaultdict(deque)
         self._nonces: "OrderedDict[str, float]" = OrderedDict()
@@ -47,39 +48,60 @@ class _MemoryBackend:
         return False
 
 
-class _RedisBackend:
-    def __init__(self, client) -> None:
-        self._r = client
+class Store:
+    """Redis-first with automatic reconnect and an in-process fallback."""
 
-    def allow(self, key: str, limit: int, window: float) -> bool:
-        # Fixed-window counter: INCR then set expiry on first hit.
+    def __init__(self, url: str) -> None:
+        self._url = url
+        self._mem = _Memory()
+        self._client = None
+        self._next_try = 0.0
+
+    def _redis(self):
+        if not self._url or _redis_lib is None:
+            return None
+        if self._client is not None:
+            return self._client
+        now = time.monotonic()
+        if now < self._next_try:          # back off between reconnect attempts
+            return None
+        try:
+            client = _redis_lib.from_url(self._url, socket_timeout=1, socket_connect_timeout=1)
+            client.ping()
+            self._client = client
+            return client
+        except Exception:
+            self._next_try = now + 5.0    # retry at most every 5s
+            return None
+
+    def _drop(self) -> None:
+        self._client = None
+        self._next_try = time.monotonic() + 5.0
+
+    def allow(self, key: str, limit: int, window: float = 60.0) -> bool:
+        r = self._redis()
+        if r is None:
+            return self._mem.allow(key, limit, window)
         rkey = f"sat:rl:{key}:{int(time.time() // window)}"
         try:
-            n = self._r.incr(rkey)
+            n = r.incr(rkey)
             if n == 1:
-                self._r.expire(rkey, int(window) + 1)
+                r.expire(rkey, int(window) + 1)
             return n <= limit
         except Exception:
-            return True  # fail-open on store errors; never lock everyone out
+            self._drop()
+            return self._mem.allow(key, limit, window)
 
     def seen_nonce(self, nonce: str, ttl: float) -> bool:
+        r = self._redis()
+        if r is None:
+            return self._mem.seen_nonce(nonce, ttl)
         try:
-            # SET key NX EX: returns True if newly set (i.e. not seen before).
-            ok = self._r.set(f"sat:nonce:{nonce}", "1", nx=True, ex=int(ttl) + 1)
+            ok = r.set(f"sat:nonce:{nonce}", "1", nx=True, ex=int(ttl) + 1)
             return not ok
         except Exception:
-            return False  # fail-open: do not reject legitimate traffic
+            self._drop()
+            return self._mem.seen_nonce(nonce, ttl)
 
 
-def _make_backend():
-    if settings.redis_url and _redis_lib is not None:
-        try:
-            client = _redis_lib.from_url(settings.redis_url, socket_timeout=1)
-            client.ping()
-            return _RedisBackend(client)
-        except Exception:
-            pass
-    return _MemoryBackend()
-
-
-store = _make_backend()
+store = Store(settings.redis_url)

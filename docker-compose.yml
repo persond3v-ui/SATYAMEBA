@@ -40,6 +40,11 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     networks: [satyameba_net]
     expose: ["6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   db:
     image: postgres:16-alpine
@@ -70,7 +75,7 @@ services:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     expose: ["8000"]
 
   jupyterhub:
@@ -104,6 +109,8 @@ services:
     build: ./frontend
     image: satyameba/edge:latest
     <<: *restart
+    environment:
+      SAT_MAX_UPLOAD: ${SAT_MAX_UPLOAD:-0}     # 0 = unlimited; set e.g. 10g to cap uploads
     ports:
       - "80:80"
       - "443:443"

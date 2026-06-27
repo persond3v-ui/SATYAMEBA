@@ -16,8 +16,11 @@ from .. import audit, hub
 from ..config import get_settings
 from ..database import get_db
 from ..deps import require_admin
-from ..models import AuditLog, Node, User, UserRole, UserSession, UserStatus
+from ..models import AuditLog, Node, NodeStatus, User, UserRole, UserSession, UserStatus
+from ..netutil import client_ip
 from ..schemas import ApproveRequest, AuditOut, NodeOut, RejectRequest, UserOut
+from ..security import hash_password
+from ..timeutil import aware, utcnow
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 settings = get_settings()
@@ -35,8 +38,7 @@ METRIC_QUERIES = {
 
 
 def _ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for")
-    return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")
+    return client_ip(request)
 
 
 @router.get("/users", response_model=list[UserOut])
@@ -156,9 +158,80 @@ async def reinstate(
     return user
 
 
+@router.post("/users/{user_id}/reset-2fa", response_model=UserOut)
+def reset_2fa(user_id: str, request: Request,
+              admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Recovery: clear a user's TOTP so they can re-enrol (lost authenticator)."""
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    user.totp_enabled = False
+    user.totp_secret = None
+    db.commit()
+    audit.record(db, action="admin.reset_2fa", actor_id=admin.id, actor_label=admin.username,
+                 target=user.username, ip=_ip(request))
+    return user
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_password(user_id: str, request: Request,
+                   admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Recovery: set a random temporary password the admin relays to the user.
+
+    The user must change it on next login (must_change_password) and all their
+    sessions are revoked. Returns the temp password ONCE."""
+    import secrets as _secrets
+
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    temp = _secrets.token_urlsafe(12)
+    user.password_hash = hash_password(temp)
+    user.must_change_password = True
+    user.failed_logins = 0
+    user.locked_until = None
+    for s in db.execute(select(UserSession).where(UserSession.user_id == user.id)).scalars():
+        s.revoked = True
+    db.commit()
+    audit.record(db, action="admin.reset_password", actor_id=admin.id, actor_label=admin.username,
+                 target=user.username, ip=_ip(request))
+    return {"username": user.username, "temporary_password": temp,
+            "note": "Relay securely; the user must change it on next login."}
+
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user(user_id: str, request: Request,
+                      admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Permanently remove a user (and their Hub account/server)."""
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if user.id == admin.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot delete yourself")
+    username = user.username
+    try:
+        await hub.delete_user(username)
+    except Exception:
+        pass
+    db.delete(user)   # sessions cascade-delete
+    db.commit()
+    audit.record(db, action="admin.delete_user", actor_id=admin.id, actor_label=admin.username,
+                 target=username, ip=_ip(request))
+    return None
+
+
 @router.get("/nodes", response_model=list[NodeOut])
 def nodes(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
-    return list(db.execute(select(Node).order_by(Node.role.desc(), Node.hostname)).scalars())
+    """List cluster nodes. A node whose heartbeat is stale is reported offline
+    (derived live from last_heartbeat — fixes 'dead node still shows online')."""
+    cutoff_age = settings.node_offline_seconds
+    out = []
+    for n in db.execute(select(Node).order_by(Node.role.desc(), Node.hostname)).scalars():
+        hb = aware(n.last_heartbeat)
+        if hb is None or (utcnow() - hb).total_seconds() > cutoff_age:
+            n.status = NodeStatus.offline
+        out.append(n)
+    return out
 
 
 @router.get("/sessions/active")

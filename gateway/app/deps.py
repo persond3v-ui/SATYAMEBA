@@ -5,10 +5,20 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .config import get_settings
 from .database import get_db
 from .models import User, UserRole, UserSession, UserStatus
 from .security import decode_token
 from .timeutil import aware, utcnow
+
+settings = get_settings()
+
+# While a forced password change is pending, only these paths are reachable.
+_PW_CHANGE_ALLOWED = (
+    "/api/auth/change-password",
+    "/api/auth/me",
+    "/api/auth/logout",
+)
 
 
 def _bearer(request: Request) -> str:
@@ -42,9 +52,11 @@ def get_current_session(request: Request, db: Session = Depends(get_db)) -> tupl
         # An admin may have suspended the account mid-session.
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"Account is {user.status.value}")
 
-    # Stash the session signing key for the request-signing middleware.
-    request.state.signing_key = session.signing_key
-    request.state.user_id = user.id
+    # Enforce a pending password change: lock the user out of everything except
+    # changing it (the SPA routes them to the change-password form).
+    if user.must_change_password and request.url.path not in _PW_CHANGE_ALLOWED:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "password_change_required")
+
     return user, session
 
 
@@ -55,4 +67,7 @@ def get_current_user(pair: tuple[User, UserSession] = Depends(get_current_sessio
 def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != UserRole.admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Administrator privileges required")
+    # Optionally require admins to have enrolled TOTP before any privileged action.
+    if settings.require_admin_2fa and not user.totp_enabled:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "admin_2fa_required")
     return user

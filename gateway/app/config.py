@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     bot_filter_enabled: bool = True
     require_admin_2fa: bool = False  # if true, admins must enrol TOTP before privileged use
 
+    # --- misc operational knobs ---
+    node_offline_seconds: int = 90          # heartbeat age before a node reads offline
+    audit_retention_days: int = 0           # 0 = keep all; >0 prunes older audit rows
+    # Key for encrypting sensitive columns (TOTP secrets) at rest. If empty, a key
+    # is derived from internal_shared_secret so a DB-only dump can't decrypt them.
+    data_encryption_key: str = ""
+
     @field_validator("cors_origins", "request_signing_protect_methods", mode="before")
     @classmethod
     def _split_csv(cls, v):

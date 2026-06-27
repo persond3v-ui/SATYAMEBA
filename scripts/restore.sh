@@ -9,7 +9,7 @@ DIR="${1:-}"
 [[ -f .env ]] || { echo "no .env — restore env.bak first: cp $DIR/env.bak .env"; exit 1; }
 set -a; source .env; set +a
 
-CID="$(docker ps --filter 'ancestor=postgres:16-alpine' -q | head -1)"
+CID="$(docker ps --format '{{.ID}} {{.Image}}' | awk '/postgres/ {print $1; exit}')"
 [[ -z "$CID" ]] && { echo "Postgres container not found."; exit 1; }
 
 read -r -p "This will overwrite data in '$POSTGRES_DB'. Continue? [y/N] " ok

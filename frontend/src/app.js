@@ -110,6 +110,29 @@ function registerView() {
   };
 }
 
+function forcedChangeView() {
+  view.innerHTML = `
+    <div class="card auth-card">
+      <h1>Set a new password</h1>
+      <p class="muted">Your account must change its password before continuing.</p>
+      <label>Current / temporary password</label>
+      <input id="op" type="password" autocomplete="current-password" />
+      <label>New password</label><input id="np" type="password" autocomplete="new-password" />
+      <p class="hint">Min 10 chars, mixing 3 of: lower, upper, digit, symbol.</p>
+      <div class="btn-row"><button id="go">Update password</button></div>
+      <div class="err" id="err"></div>
+    </div>`;
+  view.querySelector("#go").onclick = async () => {
+    const err = view.querySelector("#err"); err.textContent = "";
+    try {
+      await api.changePassword(view.querySelector("#op").value, view.querySelector("#np").value);
+      toast("Password updated", "ok");
+      me = await api.me();
+      go(me.role === "admin" ? "#/admin" : "#/app");
+    } catch (e) { err.textContent = e.message; }
+  };
+}
+
 // ------------------------------------------------------------- user workspace
 async function workspaceView() {
   view.innerHTML = `
@@ -245,7 +268,17 @@ async function adminView(tab = "Overview") {
     else if (tab === "Sessions") await renderSessions(panel);
     else if (tab === "Monitoring") renderMonitoring(panel);
     else if (tab === "Audit") await renderAudit(panel);
-  } catch (e) { panel.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  } catch (e) {
+    if (e.message === "admin_2fa_required") {
+      panel.innerHTML = `<div class="card" style="border-color:var(--warn)">
+        🔒 <strong>Two-factor authentication is required for admins.</strong>
+        <p class="muted">Enable 2FA in your workspace, then return here.</p>
+        <div class="btn-row"><button id="to2fa">Go to workspace</button></div></div>`;
+      panel.querySelector("#to2fa").onclick = () => go("#/app");
+    } else {
+      panel.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+    }
+  }
 }
 
 async function renderOverview(p) {
@@ -333,21 +366,37 @@ async function renderUsers(p) {
     <th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Last login</th><th>Action</th>
     </tr></thead><tbody>${list.map(rowFor).join("")}</tbody></table></div>`;
   function rowFor(u) {
-    const act = u.status === "suspended"
-      ? `<button class="ok reinstate">Reinstate</button>`
-      : `<button class="danger suspend">Kick off</button>`;
+    if (u.username === me.username) {
+      var act = '<span class="muted">you</span>';
+    } else {
+      const susp = u.status === "suspended"
+        ? `<button class="ok reinstate">Reinstate</button>`
+        : `<button class="danger suspend">Kick off</button>`;
+      var act = `${susp}
+        <button class="secondary reset2fa">Reset 2FA</button>
+        <button class="secondary resetpw">Reset PW</button>
+        <button class="danger del">Delete</button>`;
+    }
+    const twofa = u.totp_enabled ? ' 🔒' : '';
     return `<tr data-id="${u.id}">
-      <td><strong>${esc(u.username)}</strong></td><td>${esc(u.email)}</td>
+      <td><strong>${esc(u.username)}</strong>${twofa}</td><td>${esc(u.email)}</td>
       <td>${esc(u.role)}</td><td>${badge(u.status)}</td>
       <td class="muted">${u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"}</td>
-      <td>${u.username === me.username ? '<span class="muted">you</span>' : act}</td></tr>`;
+      <td>${act}</td></tr>`;
   }
   p.querySelectorAll("tr[data-id]").forEach((tr) => {
     const id = tr.dataset.id;
-    const sBtn = tr.querySelector(".suspend");
-    const rBtn = tr.querySelector(".reinstate");
-    if (sBtn) sBtn.onclick = async () => { try { await api.suspend(id); toast("User kicked off", "ok"); adminView("Users"); } catch (e) { toast(e.message, "bad"); } };
-    if (rBtn) rBtn.onclick = async () => { try { await api.reinstate(id); toast("Reinstated", "ok"); adminView("Users"); } catch (e) { toast(e.message, "bad"); } };
+    const on = (sel, fn) => { const b = tr.querySelector(sel); if (b) b.onclick = fn; };
+    const refresh = () => adminView("Users");
+    on(".suspend", async () => { try { await api.suspend(id); toast("User kicked off", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
+    on(".reinstate", async () => { try { await api.reinstate(id); toast("Reinstated", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
+    on(".reset2fa", async () => { if (!confirm("Reset this user's 2FA? They'll re-enrol on next login.")) return; try { await api.reset2fa(id); toast("2FA reset", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
+    on(".resetpw", async () => {
+      if (!confirm("Reset this user's password to a temporary one?")) return;
+      try { const r = await api.resetPassword(id); window.prompt("Temporary password (relay securely; user must change it on next login):", r.temporary_password); refresh(); }
+      catch (e) { toast(e.message, "bad"); }
+    });
+    on(".del", async () => { if (!confirm("Permanently delete this user and their notebook? This cannot be undone.")) return; try { await api.deleteUser(id); toast("User deleted", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
   });
 }
 
@@ -411,6 +460,9 @@ async function route() {
   if (hash.startsWith("#/login")) return me ? go("#/app") : loginView();
 
   if (!me) return go("#/login");
+
+  // Forced password change blocks everything else until done.
+  if (me.must_change_password) return forcedChangeView();
 
   if (hash.startsWith("#/admin")) {
     if (me.role !== "admin") return go("#/app");

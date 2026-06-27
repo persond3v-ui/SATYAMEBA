@@ -39,8 +39,31 @@ settings = get_settings()
 MAINTENANCE_INTERVAL = 900  # 15 min
 
 
+def _assert_production_secrets(s=None) -> None:
+    """Fail closed: refuse to start a production deployment with forgeable tokens."""
+    s = s or settings
+    if not s.is_production:
+        return
+    weak = []
+    rs256_ok = s.jwt_algorithm == "RS256" and s.jwt_private_key and s.jwt_public_key
+    if s.jwt_algorithm == "RS256" and not rs256_ok:
+        weak.append("RS256 selected but JWT keypair is missing (would fall back to HS256)")
+    elif not rs256_ok and "CHANGE_ME" in s.jwt_secret:
+        # Only relevant when HS256 is actually in effect.
+        weak.append("default JWT HS256 secret still in use")
+    if "CHANGE_ME" in s.internal_shared_secret:
+        weak.append("default internal shared secret still in use")
+    if weak:
+        raise RuntimeError(
+            "SATYAMEBA refuses to start in production with insecure secrets:\n  - "
+            + "\n  - ".join(weak)
+            + "\nRun scripts/gen_secrets.sh (or the setup wizard) to provision them."
+        )
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    _assert_production_secrets()
     Base.metadata.create_all(bind=engine)
     _ensure_bootstrap_admin()
 
@@ -67,6 +90,7 @@ app = FastAPI(
     description="Auth & orchestration control plane for the SATYAMEBA notebook cluster.",
     docs_url="/docs" if not settings.is_production else None,
     redoc_url=None,
+    openapi_url=None if settings.is_production else "/openapi.json",  # no route enum in prod
     lifespan=lifespan,
 )
 
@@ -127,7 +151,8 @@ def _ensure_bootstrap_admin() -> None:
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok", "project": settings.project_name, "owner": settings.owner}
+    # Minimal, unauthenticated — no project/owner disclosure.
+    return {"status": "ok"}
 
 
 @app.get("/metrics")

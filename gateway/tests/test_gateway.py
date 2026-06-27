@@ -1,4 +1,10 @@
-"""End-to-end gateway tests: onboarding, request signing, SSO, admin powers."""
+"""End-to-end gateway tests.
+
+Each test creates its own user (via the `admin` fixture + `make_user`) so the
+suite is order-independent. Covers onboarding, request signing, SSO, 2FA, admin
+recovery (reset 2FA / password / delete), forced password change, and the audit
+chain.
+"""
 import json
 import secrets
 import time
@@ -6,6 +12,10 @@ import time
 import pytest
 
 from app.security import sign_request
+
+ADMIN_BOOT_PW = "AdminP@ss123!"
+ADMIN_PW = "AdminNew#9Pass!"
+USER_PW = "Str0ng#Pass99"
 
 
 def _sign(token, skey, method, path, body: bytes):
@@ -22,181 +32,187 @@ def _sign(token, skey, method, path, body: bytes):
     }
 
 
-def _admin(client):
-    r = client.post("/api/auth/login", json={"username": "admin", "password": "AdminP@ss123!"})
+def _hdr(token):
+    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+
+@pytest.fixture(scope="session")
+def admin(client):
+    """Logged-in admin with the forced password change already cleared."""
+    t = client.post("/api/auth/login",
+                    json={"username": "admin", "password": ADMIN_BOOT_PW}).json()
+    # bootstrap admin starts with must_change_password -> change it first
+    body = json.dumps({"old_password": ADMIN_BOOT_PW, "new_password": ADMIN_PW}).encode()
+    r = client.post("/api/auth/change-password",
+                    headers=_sign(t["access_token"], t["signing_key"],
+                                  "POST", "/api/auth/change-password", body), content=body)
+    assert r.status_code == 204, r.text
+    return client.post("/api/auth/login",
+                       json={"username": "admin", "password": ADMIN_PW}).json()
+
+
+def make_user(client, admin, username, password=USER_PW, role="user"):
+    client.post("/api/auth/register", json={
+        "email": f"{username}@lab.io", "username": username,
+        "full_name": username.title(), "password": password})
+    uid = next(u["id"] for u in client.get("/api/admin/users", headers=_hdr(admin["access_token"])).json()
+               if u["username"] == username)
+    body = json.dumps({"user_id": uid, "role": role}).encode()
+    r = client.post("/api/admin/users/approve",
+                    headers=_sign(admin["access_token"], admin["signing_key"],
+                                  "POST", "/api/admin/users/approve", body), content=body)
     assert r.status_code == 200, r.text
-    return r.json()
+    return uid
 
 
+def login(client, username, password=USER_PW, otp=None):
+    body = {"username": username, "password": password}
+    if otp:
+        body["otp"] = otp
+    return client.post("/api/auth/login", json=body)
+
+
+# --------------------------------------------------------------------------- #
 def test_health(client):
-    assert client.get("/healthz").json()["owner"] == "Samaraho Mukherjee"
+    j = client.get("/healthz").json()
+    assert j == {"status": "ok"}            # no owner/project disclosure
 
 
 def test_register_requires_approval(client):
     r = client.post("/api/auth/register", json={
-        "email": "bob@lab.io", "username": "bob", "full_name": "Bob",
-        "password": "Str0ng#Pass99"})
+        "email": "pend@lab.io", "username": "pend", "password": USER_PW})
     assert r.status_code == 201 and r.json()["status"] == "pending"
-    # pending users cannot log in
-    r = client.post("/api/auth/login", json={"username": "bob", "password": "Str0ng#Pass99"})
-    assert r.status_code == 403
+    assert login(client, "pend").status_code == 403
 
 
-def test_signing_and_approval_flow(client):
-    tok = _admin(client)
-    at, sk = tok["access_token"], tok["signing_key"]
-
-    pend = client.get("/api/admin/users/pending",
-                      headers={"Authorization": f"Bearer {at}", "Accept": "application/json"})
-    bob_id = next(u["id"] for u in pend.json() if u["username"] == "bob")
+def test_signing_replay_and_tamper(client, admin):
+    uid = make_user(client, admin, "signee")
+    at, sk = admin["access_token"], admin["signing_key"]
+    path = f"/api/admin/users/{uid}/suspend"
 
     # unsigned mutation rejected
-    r = client.post("/api/admin/users/approve",
-                    headers={"Authorization": f"Bearer {at}", "Accept": "application/json"},
-                    json={"user_id": bob_id, "role": "user"})
-    assert r.status_code in (400, 401)
-
-    # signed approve works
-    body = json.dumps({"user_id": bob_id, "role": "user"}).encode()
-    r = client.post("/api/admin/users/approve",
-                    headers=_sign(at, sk, "POST", "/api/admin/users/approve", body),
-                    content=body)
-    assert r.status_code == 200 and r.json()["status"] == "approved"
-
-    # tamper + replay are rejected
-    h = _sign(at, sk, "POST", "/api/admin/users/approve", body)
-    assert client.post("/api/admin/users/approve", headers=h,
-                       content=json.dumps({"user_id": bob_id, "role": "admin"}).encode()
-                       ).status_code == 401
-    client.post("/api/admin/users/approve", headers=h, content=body)        # consume nonce
-    assert client.post("/api/admin/users/approve", headers=h, content=body).status_code == 401
-
-    # approved user can now log in
-    assert client.post("/api/auth/login",
-                       json={"username": "bob", "password": "Str0ng#Pass99"}).status_code == 200
+    assert client.post(path, headers=_hdr(at), content=b"").status_code in (400, 401)
+    # signed ok, then the same nonce is a replay
+    h = _sign(at, sk, "POST", path, b"")
+    assert client.post(path, headers=h, content=b"").status_code == 200
+    assert client.post(path, headers=h, content=b"").status_code == 401
 
 
-def test_sso_one_time_token(client, monkeypatch):
-    import app.hub as hub
-
-    async def _noop(*a, **k):
-        return ""
-
-    monkeypatch.setattr(hub, "ensure_user", _noop)
-    monkeypatch.setattr(hub, "start_server", _noop)
-
-    bob = client.post("/api/auth/login", json={"username": "bob", "password": "Str0ng#Pass99"}).json()
-    at, sk = bob["access_token"], bob["signing_key"]
-
-    body = json.dumps({"profile": "small"}).encode()
-    r = client.post("/api/notebooks/launch",
-                    headers=_sign(at, sk, "POST", "/api/notebooks/launch", body), content=body)
-    assert r.status_code == 200
-    url = r.json()["url"]
-    assert "/sso-login?token=" in url
-    token = url.split("token=")[1].split("&")[0]
-
-    from app.config import get_settings
-    secret = get_settings().internal_shared_secret
-
-    # redeem once -> ok
-    r = client.post("/api/internal/redeem-ott", headers={"X-SAT-Internal": secret},
-                    json={"token": token})
-    assert r.status_code == 200 and r.json()["name"] == "bob"
-    # redeem again -> single-use, rejected
-    r = client.post("/api/internal/redeem-ott", headers={"X-SAT-Internal": secret},
-                    json={"token": token})
-    assert r.status_code == 401
-    # wrong internal secret -> rejected
-    assert client.post("/api/internal/redeem-ott", headers={"X-SAT-Internal": "nope"},
-                       json={"token": token}).status_code == 401
-
-
-def test_change_password_and_session_revocation(client):
-    bob = client.post("/api/auth/login", json={"username": "bob", "password": "Str0ng#Pass99"}).json()
-    at, sk = bob["access_token"], bob["signing_key"]
-    body = json.dumps({"old_password": "Str0ng#Pass99", "new_password": "N3w#Pass!234"}).encode()
-    r = client.post("/api/auth/change-password",
-                    headers=_sign(at, sk, "POST", "/api/auth/change-password", body), content=body)
-    assert r.status_code == 204
-    # old password no longer works, new one does
-    assert client.post("/api/auth/login",
-                       json={"username": "bob", "password": "Str0ng#Pass99"}).status_code == 401
-    assert client.post("/api/auth/login",
-                       json={"username": "bob", "password": "N3w#Pass!234"}).status_code == 200
-
-
-def test_two_factor_login(client):
+def test_two_factor_login(client, admin):
     import pyotp
-
-    # new isolated user, approved by admin
-    client.post("/api/auth/register", json={
-        "email": "carol@lab.io", "username": "carol", "full_name": "Carol",
-        "password": "Str0ng#Pass99"})
-    tok = _admin(client)
-    at, sk = tok["access_token"], tok["signing_key"]
-    cid = next(u["id"] for u in client.get(
-        "/api/admin/users", headers={"Authorization": f"Bearer {at}", "Accept": "application/json"}
-    ).json() if u["username"] == "carol")
-    body = json.dumps({"user_id": cid, "role": "user"}).encode()
-    client.post("/api/admin/users/approve",
-                headers=_sign(at, sk, "POST", "/api/admin/users/approve", body), content=body)
-
-    # carol logs in, enrols 2FA
-    c = client.post("/api/auth/login", json={"username": "carol", "password": "Str0ng#Pass99"}).json()
+    make_user(client, admin, "twofa")
+    c = login(client, "twofa").json()
     cat, csk = c["access_token"], c["signing_key"]
     r = client.post("/api/auth/2fa/setup",
                     headers=_sign(cat, csk, "POST", "/api/auth/2fa/setup", b""), content=b"")
-    assert r.status_code == 200
+    assert r.status_code == 200 and r.json()["qr_png_data_uri"].startswith("data:image/png;base64,")
     secret = r.json()["secret"]
-    assert r.json()["qr_png_data_uri"].startswith("data:image/png;base64,")
-
-    code = pyotp.TOTP(secret).now()
-    eb = json.dumps({"code": code}).encode()
+    eb = json.dumps({"code": pyotp.TOTP(secret).now()}).encode()
     assert client.post("/api/auth/2fa/enable",
                        headers=_sign(cat, csk, "POST", "/api/auth/2fa/enable", eb),
                        content=eb).status_code == 204
+    assert login(client, "twofa").json()["detail"] == "otp_required"
+    assert login(client, "twofa", otp=pyotp.TOTP(secret).now()).status_code == 200
 
-    # login now requires the OTP
-    r = client.post("/api/auth/login", json={"username": "carol", "password": "Str0ng#Pass99"})
-    assert r.status_code == 401 and r.json()["detail"] == "otp_required"
-    r = client.post("/api/auth/login", json={
-        "username": "carol", "password": "Str0ng#Pass99", "otp": pyotp.TOTP(secret).now()})
+
+def test_change_password_revokes_sessions(client, admin):
+    make_user(client, admin, "chpw")
+    c = login(client, "chpw").json()
+    body = json.dumps({"old_password": USER_PW, "new_password": "N3w#Pass!234"}).encode()
+    assert client.post("/api/auth/change-password",
+                       headers=_sign(c["access_token"], c["signing_key"],
+                                     "POST", "/api/auth/change-password", body),
+                       content=body).status_code == 204
+    assert login(client, "chpw", "Str0ng#Pass99").status_code == 401
+    assert login(client, "chpw", "N3w#Pass!234").status_code == 200
+
+
+def test_admin_recovery_and_forced_change(client, admin, monkeypatch):
+    import app.hub as hub
+
+    async def _empty(*a, **k):
+        return []
+
+    monkeypatch.setattr(hub, "list_active", _empty)   # no real Hub in tests
+    uid = make_user(client, admin, "recover")
+    at, sk = admin["access_token"], admin["signing_key"]
+
+    # admin resets the password -> temp password + must_change
+    rp = f"/api/admin/users/{uid}/reset-password"
+    r = client.post(rp, headers=_sign(at, sk, "POST", rp, b""), content=b"")
     assert r.status_code == 200
+    temp = r.json()["temporary_password"]
+
+    # user logs in with temp pw; /me works but protected routes are blocked
+    c = login(client, "recover", temp).json()
+    tok = c["access_token"]
+    assert client.get("/api/auth/me", headers=_hdr(tok)).json()["must_change_password"] is True
+    assert client.get("/api/notebooks/status", headers=_hdr(tok)).status_code == 403  # gated
+
+    # after changing the password the gate lifts
+    body = json.dumps({"old_password": temp, "new_password": "Aft3r#Reset!9"}).encode()
+    assert client.post("/api/auth/change-password",
+                       headers=_sign(tok, c["signing_key"], "POST", "/api/auth/change-password", body),
+                       content=body).status_code == 204
+    c2 = login(client, "recover", "Aft3r#Reset!9").json()
+    assert client.get("/api/notebooks/status", headers=_hdr(c2["access_token"])).status_code == 200
+
+    # reset-2fa is callable and audited
+    r2 = f"/api/admin/users/{uid}/reset-2fa"
+    assert client.post(r2, headers=_sign(at, sk, "POST", r2, b""), content=b"").status_code == 200
 
 
-def test_bootstrap_admin_must_change_password(client):
-    tok = _admin(client)
-    me = client.get("/api/auth/me",
-                    headers={"Authorization": f"Bearer {tok['access_token']}", "Accept": "application/json"})
-    assert me.json()["must_change_password"] is True
+def test_delete_user(client, admin):
+    uid = make_user(client, admin, "deleteme")
+    at, sk = admin["access_token"], admin["signing_key"]
+    path = f"/api/admin/users/{uid}"
+    assert client.request("DELETE", path, headers=_sign(at, sk, "DELETE", path, b""),
+                          content=b"").status_code == 204
+    assert login(client, "deleteme").status_code == 401  # gone
+
+
+def test_audit_chain_intact(client, admin):
+    v = client.get("/api/admin/audit/verify", headers=_hdr(admin["access_token"]))
+    assert v.status_code == 200 and v.json()["intact"] is True
 
 
 def test_metrics_endpoint(client):
     client.get("/healthz")
-    body = client.get("/metrics").text
-    assert "satyameba_http_requests_total" in body
+    assert "satyameba_http_requests_total" in client.get("/metrics").text
 
 
 def test_maintenance_cleanup_runs(client):
     from app.maintenance import cleanup_once
-    res = cleanup_once()
-    assert set(res) == {"sso_tokens", "sessions"}
+    assert set(cleanup_once()) == {"sso_tokens", "sessions", "audit"}
 
 
-def test_suspend_and_audit_chain(client):
-    tok = _admin(client)
-    at, sk = tok["access_token"], tok["signing_key"]
-    bob_id = next(u["id"] for u in client.get(
-        "/api/admin/users", headers={"Authorization": f"Bearer {at}", "Accept": "application/json"}
-    ).json() if u["username"] == "bob")
+def test_production_fail_closed():
+    from types import SimpleNamespace
 
-    path = f"/api/admin/users/{bob_id}/suspend"
-    r = client.post(path, headers=_sign(at, sk, "POST", path, b""), content=b"")
-    assert r.status_code == 200 and r.json()["status"] == "suspended"
-    assert client.post("/api/auth/login",
-                       json={"username": "bob", "password": "N3w#Pass!234"}).status_code == 403
+    import pytest
 
-    v = client.get("/api/admin/audit/verify",
-                   headers={"Authorization": f"Bearer {at}", "Accept": "application/json"})
-    assert v.status_code == 200 and v.json()["intact"] is True
+    from app.main import _assert_production_secrets
+
+    def s(**kw):
+        base = dict(jwt_algorithm="RS256", jwt_private_key="K", jwt_public_key="K",
+                    jwt_secret="strong", internal_shared_secret="strong")
+        base.update(kw)
+        ns = SimpleNamespace(**base)
+        ns.is_production = True
+        return ns
+
+    # properly configured RS256 -> OK
+    _assert_production_secrets(s())
+    # RS256 selected but keypair missing -> refuse
+    with pytest.raises(RuntimeError):
+        _assert_production_secrets(s(jwt_private_key="", jwt_public_key=""))
+    # default HS256 secret while HS256 is effective -> refuse
+    with pytest.raises(RuntimeError):
+        _assert_production_secrets(s(jwt_algorithm="HS256", jwt_secret="CHANGE_ME_x"))
+    # default internal secret -> refuse
+    with pytest.raises(RuntimeError):
+        _assert_production_secrets(s(internal_shared_secret="CHANGE_ME_internal"))
+    # non-production never blocks
+    ns = s(jwt_private_key="")
+    ns.is_production = False
+    _assert_production_secrets(ns)

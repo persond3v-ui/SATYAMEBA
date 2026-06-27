@@ -21,9 +21,13 @@ RUN if [ "$OBFUSCATE" = "true" ]; then \
 FROM nginx:1.27-alpine
 RUN rm -rf /usr/share/nginx/html/*
 COPY --from=jsbuild /build/dist/ /usr/share/nginx/html/
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY nginx.conf.template /etc/nginx/nginx.conf.template
 COPY proxy_common.conf /etc/nginx/proxy_common.conf
 COPY proxy_ws.conf /etc/nginx/proxy_ws.conf
+COPY docker-entrypoint.sh /docker-entrypoint-satyameba.sh
+RUN chmod +x /docker-entrypoint-satyameba.sh
 EXPOSE 80 443
+# busybox-safe healthcheck: plain HTTP /edge-health (no TLS, no GNU-only flags).
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD wget -qO- --no-check-certificate https://localhost/ >/dev/null 2>&1 || exit 1
+    CMD wget -qO- http://127.0.0.1/edge-health >/dev/null 2>&1 || exit 1
+ENTRYPOINT ["/docker-entrypoint-satyameba.sh"]

@@ -193,6 +193,9 @@ class SetupApp(tk.Tk):
         ttk.Checkbutton(role, text="This node has a GPU", variable=self.gpuvar).grid(row=0, column=2, sticky="w", padx=6)
         self.singlevar = tk.BooleanVar(value=False)
         ttk.Checkbutton(role, text="Single-host (compose)", variable=self.singlevar).grid(row=0, column=3, sticky="w")
+        self.nfsvar = tk.BooleanVar(value=False)
+        ttk.Checkbutton(role, text="Shared NFS storage (work follows users)",
+                        variable=self.nfsvar).grid(row=3, column=2, columnspan=2, sticky="w", padx=6)
 
         self.fields: dict[str, tk.Entry] = {}
         self._add_field(role, "domain", "Domain", "satyameba.local", 1, 0)
@@ -388,6 +391,8 @@ class SetupApp(tk.Tk):
                 cmd += ["--advertise-addr", adv]
             if gpu:
                 cmd.append("--gpu")
+            if self.nfsvar.get():
+                cmd.append("--nfs")
         else:
             join = self.fields["join"].get().strip()
             secret = self.fields["secret"].get().strip()
@@ -399,6 +404,8 @@ class SetupApp(tk.Tk):
                    "--gateway", f"https://{adv}"]
             if gpu:
                 cmd.append("--gpu")
+            if self.nfsvar.get():
+                cmd += ["--nfs-server", adv]
         self.q.put(("statusbar", f"Bootstrapping {role}…"))
         rc = self._run(cmd)
         self.q.put(("statusbar", f"Bootstrap {'succeeded' if rc == 0 else 'failed — see log'}."))

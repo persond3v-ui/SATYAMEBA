@@ -14,6 +14,7 @@ if _DB.exists():
     _DB.unlink()
 
 os.environ.update({
+    "SAT_ENVIRONMENT": "development",       # don't trip the production fail-closed check
     "SAT_DATABASE_URL": f"sqlite+pysqlite:///{_DB}",
     "SAT_JWT_ALGORITHM": "HS256",
     "SAT_JWT_SECRET": "x" * 48,

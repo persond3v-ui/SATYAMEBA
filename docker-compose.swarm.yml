@@ -47,6 +47,11 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     networks: [satyameba_net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     deploy:
       placement: { constraints: ["node.role == manager"] }
       restart_policy: { condition: any }
@@ -95,6 +100,8 @@ services:
 
   edge:
     image: satyameba/edge:latest
+    environment:
+      SAT_MAX_UPLOAD: ${SAT_MAX_UPLOAD:-0}
     ports:
       - target: 80
         published: 80

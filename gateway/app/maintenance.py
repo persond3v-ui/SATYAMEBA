@@ -13,7 +13,7 @@ from sqlalchemy import delete, or_
 
 from .config import get_settings
 from .database import SessionLocal
-from .models import SsoToken, UserSession
+from .models import AuditLog, SsoToken, UserSession
 from .timeutil import utcnow
 
 logger = logging.getLogger("satyameba.maintenance")
@@ -33,9 +33,19 @@ def cleanup_once() -> dict:
         sessions = db.execute(
             delete(UserSession).where(UserSession.expires_at < cutoff)
         ).rowcount
+        # Optional audit retention (default 0 = keep everything). NOTE: pruning the
+        # oldest rows breaks hash-chain verification before the retention window —
+        # only enable if you archive first / accept windowed verification.
+        audit = 0
+        if settings.audit_retention_days > 0:
+            audit_cutoff = now - timedelta(days=settings.audit_retention_days)
+            audit = db.execute(
+                delete(AuditLog).where(AuditLog.timestamp < audit_cutoff)
+            ).rowcount
         db.commit()
-        if sso or sessions:
-            logger.info("maintenance: removed %s sso tokens, %s stale sessions", sso, sessions)
-        return {"sso_tokens": sso or 0, "sessions": sessions or 0}
+        if sso or sessions or audit:
+            logger.info("maintenance: removed %s sso tokens, %s sessions, %s audit rows",
+                        sso, sessions, audit)
+        return {"sso_tokens": sso or 0, "sessions": sessions or 0, "audit": audit or 0}
     finally:
         db.close()

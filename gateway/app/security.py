@@ -16,6 +16,7 @@ Design notes
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import secrets
@@ -24,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
 import pyotp
+from cryptography.fernet import Fernet
 
 from .config import get_settings
 
@@ -155,3 +157,31 @@ def verify_totp(secret: str, code: str) -> bool:
         return pyotp.TOTP(secret).verify(code.strip().replace(" ", ""), valid_window=1)
     except Exception:
         return False
+
+
+# --------------------------------------------------------------------------- #
+# At-rest encryption for sensitive columns (TOTP secrets)
+# --------------------------------------------------------------------------- #
+def _fernet() -> Fernet:
+    key = settings.data_encryption_key
+    if not key:
+        # Derive a Fernet key from the internal shared secret (which lives in
+        # .env / docker secret, not the DB), so a DB-only dump cannot decrypt.
+        digest = hashlib.sha256(settings.internal_shared_secret.encode()).digest()
+        key = base64.urlsafe_b64encode(digest).decode()
+    return Fernet(key.encode() if isinstance(key, str) else key)
+
+
+def encrypt_secret(plaintext: str) -> str:
+    if not plaintext:
+        return ""
+    return _fernet().encrypt(plaintext.encode()).decode()
+
+
+def decrypt_secret(token: str | None) -> str:
+    if not token:
+        return ""
+    try:
+        return _fernet().decrypt(token.encode()).decode()
+    except Exception:
+        return ""

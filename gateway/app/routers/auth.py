@@ -22,9 +22,12 @@ from ..schemas import (
     TwoFASetupResponse,
     UserOut,
 )
+from ..netutil import client_ip
 from ..security import (
     create_access_token,
     decode_token,
+    decrypt_secret,
+    encrypt_secret,
     hash_password,
     new_jti,
     new_signing_key,
@@ -43,10 +46,20 @@ LOCK_MINUTES = 15
 
 
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    return client_ip(request)
+
+
+def _register_failure(db: Session, user: User, request: Request) -> None:
+    """Count a failed auth attempt (bad password OR bad OTP) and lock the account
+    after too many — so the second factor is brute-force protected too."""
+    now = datetime.now(timezone.utc)
+    user.failed_logins += 1
+    if user.failed_logins >= MAX_FAILED:
+        user.locked_until = now + timedelta(minutes=LOCK_MINUTES)
+        user.failed_logins = 0
+        audit.record(db, action="user.locked", actor_id=user.id,
+                     actor_label=user.username, ip=_client_ip(request))
+    db.commit()
 
 
 def _issue_session(db: Session, user: User, request: Request) -> TokenResponse:
@@ -134,13 +147,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         raise HTTPException(status.HTTP_423_LOCKED, "Account temporarily locked. Try later.")
 
     if not verify_password(payload.password, user.password_hash):
-        user.failed_logins += 1
-        if user.failed_logins >= MAX_FAILED:
-            user.locked_until = now + timedelta(minutes=LOCK_MINUTES)
-            user.failed_logins = 0
-            audit.record(db, action="user.locked", actor_id=user.id,
-                         actor_label=user.username, ip=_client_ip(request))
-        db.commit()
+        _register_failure(db, user, request)
         raise generic
 
     if user.status == UserStatus.pending:
@@ -153,9 +160,8 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         if not payload.otp:
             # Distinct code so the SPA can prompt for the 6-digit token.
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "otp_required")
-        if not verify_totp(user.totp_secret or "", payload.otp):
-            user.failed_logins += 1
-            db.commit()
+        if not verify_totp(decrypt_secret(user.totp_secret), payload.otp):
+            _register_failure(db, user, request)   # 2FA brute-force is locked too
             raise generic
 
     tokens = _issue_session(db, user, request)
@@ -235,7 +241,7 @@ def twofa_setup(pair=Depends(get_current_session), db: Session = Depends(get_db)
 
     user, _ = pair
     secret = new_totp_secret()
-    user.totp_secret = secret
+    user.totp_secret = encrypt_secret(secret)   # stored encrypted at rest
     user.totp_enabled = False  # stays off until a code is verified
     db.commit()
     uri = totp_uri(secret, user.username)
@@ -249,7 +255,7 @@ def twofa_setup(pair=Depends(get_current_session), db: Session = Depends(get_db)
 def twofa_enable(payload: TwoFACodeRequest, request: Request,
                  pair=Depends(get_current_session), db: Session = Depends(get_db)):
     user, _ = pair
-    if not user.totp_secret or not verify_totp(user.totp_secret, payload.code):
+    if not user.totp_secret or not verify_totp(decrypt_secret(user.totp_secret), payload.code):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid code — try again")
     user.totp_enabled = True
     db.commit()
@@ -262,7 +268,7 @@ def twofa_enable(payload: TwoFACodeRequest, request: Request,
 def twofa_disable(payload: TwoFACodeRequest, request: Request,
                   pair=Depends(get_current_session), db: Session = Depends(get_db)):
     user, _ = pair
-    if not user.totp_enabled or not verify_totp(user.totp_secret or "", payload.code):
+    if not user.totp_enabled or not verify_totp(decrypt_secret(user.totp_secret), payload.code):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid code")
     user.totp_enabled = False
     user.totp_secret = None

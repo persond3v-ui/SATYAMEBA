@@ -86,6 +86,30 @@ Each user's notebook runs in its own container with:
 - **SSO token not logged.** The one-time-token handoff URL is served with
   `access_log off` so the token never lands in the edge access log.
 
+- **Internal endpoints are edge-blocked.** `/api/internal/*` returns 404 at the
+  edge — those routes are only reachable container-to-container, not from outside.
+- **Trustworthy client IP.** The gateway takes the **rightmost** `X-Forwarded-For`
+  hop (the one our edge appended), so a spoofed header can't bypass rate limits or
+  poison the audit log.
+- **Fail-closed in production.** The gateway refuses to start if RS256 keys are
+  missing or default secrets are still in place — no silent fallback to a weak,
+  forgeable HS256 token.
+- **TOTP secrets encrypted at rest** with Fernet, keyed from a secret that lives
+  in `.env`/docker-secret, not the database — a DB-only dump can't mint codes.
+- **2FA brute-force is locked**, not just rate-limited, after repeated bad codes.
+- **Admin recovery without back-doors** — admins can reset a user's 2FA or
+  password (one-time temp + forced change) or delete the account; all audited.
+
+### Token storage (an accepted tradeoff)
+
+Access/refresh tokens and the request-signing key live in **`sessionStorage`**,
+which is readable by JavaScript and therefore by any XSS. We mitigate this with a
+strict CSP, output escaping, and clearing on tab close. The alternative —
+httpOnly cookies — would hide tokens from JS but introduce CSRF surface and
+complicate the cross-service (Hub/Grafana) flows. Given the strict CSP and the
+VLAN-internal threat model, sessionStorage is the deliberate choice; revisit it
+if the platform is ever exposed to the public internet.
+
 > Still deferred (needs your identity provider): OIDC/LDAP institutional login.
 > The integration point is the gateway authenticator + a new
 > `/api/internal/authenticate`-style adapter; documented as a future option.

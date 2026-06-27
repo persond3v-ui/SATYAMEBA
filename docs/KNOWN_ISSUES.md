@@ -3,6 +3,49 @@
 Self-audited list of flaws found in the Phase-1 core and their current status.
 Severity: 🔴 high · 🟠 medium · 🟡 low. Status: ✅ fixed · 🟢 mitigated · 📌 documented.
 
+## Resolved — full audit round (operational + security + reliability)
+
+Operational / recovery
+- **✅ Admin recovery** — `reset-2fa`, `reset-password` (returns a one-time temp
+  password + forces a change), and `DELETE /users/{id}` endpoints, with SPA
+  buttons in the Users tab. No more permanent lock-out on a lost authenticator.
+- **✅ Forced password change is enforced** server-side — a user with
+  `must_change_password` can reach only change-password/me/logout until they
+  rotate it (SPA routes them to a dedicated form).
+- **✅ Wizard does NFS** — a "Shared NFS storage" checkbox wires `--nfs` /
+  `--nfs-server` into the master/worker bootstrap.
+- **✅ Backup hardened** — matches the DB container by image family (any tag) and
+  adds `--no-secrets`.
+
+Security
+- **✅ Internal endpoints blocked at the edge** (`location /api/internal/ { return 404; }`).
+- **✅ Rightmost X-Forwarded-For** (`netutil.client_ip`) — no more rate-limit
+  bypass / audit-IP spoofing.
+- **✅ `SAT_REQUIRE_ADMIN_2FA` enforced** in `require_admin`.
+- **✅ Fail-closed in production** — the gateway refuses to start with missing
+  RS256 keys or default secrets.
+- **✅ TOTP secrets encrypted at rest** (Fernet; key derived from a secret not in
+  the DB).
+- **✅ OTP failures trip the lockout** (2FA brute-force is rate+lock limited).
+- **✅ `/healthz` minimal** — no owner/project disclosure.
+- **✅ Upload cap configurable** (`SAT_MAX_UPLOAD`, default unlimited) to bound
+  disk-fill; prjquota remains the hard control.
+- **🟢 sessionStorage tokens** — kept (cleared on tab close, CSP-mitigated); the
+  tradeoff vs httpOnly cookies (which add CSRF surface) is documented in SECURITY.md.
+
+Reliability
+- **✅ nginx dynamic resolver** + variable upstreams — no stale-IP 502s on
+  container re-creation; also fixed Grafana sub-path proxying.
+- **✅ Redis store reconnects** lazily (no permanent in-memory degradation) +
+  Redis healthcheck and `depends_on: healthy`.
+- **✅ Node status derived from heartbeat age** — dead nodes read offline.
+- **✅ Edge healthcheck fixed** — busybox-safe `/edge-health` over plain HTTP.
+- **✅ Optional audit retention** (`SAT_AUDIT_RETENTION_DAYS`, default keep-all).
+
+Code quality
+- **✅ Removed dead `request.state` writes**; **✅ order-independent tests**
+  (per-test users + fixtures); **✅ `/openapi.json` disabled in production**.
+
 ## Resolved — security-hardening round
 
 - **S-1 ✅ TOTP two-factor auth** — enrol/enable/disable endpoints + QR, login
