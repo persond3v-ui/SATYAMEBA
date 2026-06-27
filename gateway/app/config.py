@@ -11,7 +11,15 @@ from functools import lru_cache
 from typing import Annotated, List
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+try:
+    # NoDecode tells pydantic-settings to skip JSON-decoding a complex field so we
+    # can accept a plain comma-separated env value (parsed by _split_csv below).
+    from pydantic_settings import NoDecode
+except ImportError:  # pragma: no cover - tolerate builds that don't export it
+    class NoDecode:  # type: ignore[no-redef]
+        """No-op marker fallback; the _split_csv validator still parses CSV."""
 
 
 class Settings(BaseSettings):

@@ -6,19 +6,40 @@ recorded in the tamper-evident audit chain.
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import audit, hub
+from .. import audit, hub, scheduler
 from ..config import get_settings
 from ..database import get_db
 from ..deps import require_admin
-from ..models import AuditLog, Node, NodeStatus, User, UserRole, UserSession, UserStatus
+from ..models import (
+    AuditLog,
+    BoostStatus,
+    GpuBoostRequest,
+    Node,
+    NodeStatus,
+    User,
+    UserRole,
+    UserSession,
+    UserStatus,
+)
 from ..netutil import client_ip
-from ..schemas import ApproveRequest, AuditOut, NodeOut, RejectRequest, UserOut
+from ..schemas import (
+    ApproveRequest,
+    AuditOut,
+    BoostDecision,
+    BoostOut,
+    NodeOut,
+    RejectRequest,
+    UserOut,
+)
 from ..security import hash_password
 from ..timeutil import aware, utcnow
 
@@ -250,6 +271,94 @@ def nodes(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     return out
 
 
+@router.post("/nodes/{node_id}/drain", response_model=NodeOut)
+def drain_node(node_id: str, request: Request,
+               admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Maintenance mode: stop scheduling new notebooks onto this node so it can be
+    rebooted/serviced. Running notebooks are left alone (drain, don't kill)."""
+    node = db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+    node.status = NodeStatus.draining
+    db.commit()
+    db.refresh(node)
+    audit.record(db, action="admin.node_drain", actor_id=admin.id, actor_label=admin.username,
+                 target=node.hostname, ip=_ip(request))
+    return node
+
+
+@router.post("/nodes/{node_id}/activate", response_model=NodeOut)
+def activate_node(node_id: str, request: Request,
+                  admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Return a drained node to the scheduling pool."""
+    node = db.get(Node, node_id)
+    if node is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Node not found")
+    node.status = NodeStatus.online
+    db.commit()
+    db.refresh(node)
+    audit.record(db, action="admin.node_activate", actor_id=admin.id, actor_label=admin.username,
+                 target=node.hostname, ip=_ip(request))
+    return node
+
+
+# ----------------------------------------------------------- GPU boost review ---
+@router.get("/boosts", response_model=list[BoostOut])
+def list_boosts(status_filter: str = Query(default="pending", alias="status"),
+                admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    stmt = select(GpuBoostRequest).order_by(GpuBoostRequest.created_at.desc())
+    if status_filter and status_filter != "all":
+        try:
+            stmt = stmt.where(GpuBoostRequest.status == BoostStatus(status_filter))
+        except ValueError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown boost status")
+    return list(db.execute(stmt).scalars())
+
+
+@router.post("/boosts/{boost_id}/approve", response_model=BoostOut)
+def approve_boost(boost_id: str, payload: BoostDecision, request: Request,
+                  admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    req = db.get(GpuBoostRequest, boost_id)
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Boost request not found")
+    if req.status != BoostStatus.pending:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Request already decided")
+    if payload.gpus:
+        req.gpus = payload.gpus
+    req.status = BoostStatus.approved
+    req.decided_at = utcnow()
+    req.decided_by = admin.id
+    scheduler.notify(db, req.user_id, "boost",
+                     f"Your GPU boost was approved for {req.gpus} GPU node(s). "
+                     "Launch (or relaunch) your notebook to use it — good for one session.")
+    db.commit()
+    db.refresh(req)
+    audit.record(db, action="admin.boost_approve", actor_id=admin.id, actor_label=admin.username,
+                 target=req.username, ip=_ip(request), detail={"gpus": req.gpus})
+    return req
+
+
+@router.post("/boosts/{boost_id}/deny", response_model=BoostOut)
+def deny_boost(boost_id: str, payload: BoostDecision, request: Request,
+               admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    req = db.get(GpuBoostRequest, boost_id)
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Boost request not found")
+    if req.status != BoostStatus.pending:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Request already decided")
+    req.status = BoostStatus.denied
+    req.decided_at = utcnow()
+    req.decided_by = admin.id
+    scheduler.notify(db, req.user_id, "warning",
+                     "Your GPU boost request was declined" +
+                     (f": {payload.reason}" if payload.reason else "."))
+    db.commit()
+    db.refresh(req)
+    audit.record(db, action="admin.boost_deny", actor_id=admin.id, actor_label=admin.username,
+                 target=req.username, ip=_ip(request))
+    return req
+
+
 @router.get("/sessions/active")
 async def active_notebooks(admin: User = Depends(require_admin)):
     try:
@@ -276,6 +385,29 @@ def audit_log(
 def audit_verify(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     ok, bad = audit.verify_chain(db)
     return {"intact": ok, "first_tampered_id": bad}
+
+
+@router.get("/audit/export.csv")
+def audit_export(request: Request, limit: int = Query(default=10000, le=100000),
+                 admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Download the audit trail as CSV (compliance / offline review)."""
+    rows = list(db.execute(
+        select(AuditLog).order_by(AuditLog.id.desc()).limit(limit)
+    ).scalars())
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["id", "timestamp", "actor", "action", "target", "ip", "detail"])
+    for a in rows:
+        ts = aware(a.timestamp)
+        w.writerow([a.id, ts.isoformat() if ts else "", a.actor_label, a.action,
+                    a.target, a.ip, a.detail])
+    audit.record(db, action="admin.audit_export", actor_id=admin.id,
+                 actor_label=admin.username, ip=_ip(request), detail={"rows": len(rows)})
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=satyameba-audit.csv"},
+    )
 
 
 @router.get("/metrics/live")

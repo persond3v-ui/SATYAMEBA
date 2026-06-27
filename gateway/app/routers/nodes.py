@@ -77,7 +77,10 @@ def heartbeat(
     if node is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Register first")
     node.last_heartbeat = datetime.now(timezone.utc)
-    node.status = NodeStatus.online
+    # Don't undo an admin-set drain: a draining node stays out of the scheduler
+    # until an admin explicitly re-activates it.
+    if node.status != NodeStatus.draining:
+        node.status = NodeStatus.online
     if payload.labels:
         node.labels = payload.labels
     db.commit()

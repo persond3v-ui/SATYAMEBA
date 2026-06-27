@@ -126,6 +126,36 @@ class NodeRegister(BaseModel):
     labels: dict = Field(default_factory=dict)
 
 
+class BoostRequestCreate(BaseModel):
+    gpus: int = Field(default=2, ge=1, le=64)
+    reason: str = Field(default="", max_length=512)
+
+
+class BoostDecision(BaseModel):
+    gpus: int | None = Field(default=None, ge=1, le=64)   # admin may adjust the grant
+    reason: str = Field(default="", max_length=512)
+
+
+class BoostOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    username: str
+    gpus: int
+    reason: str
+    status: str
+    created_at: datetime
+    decided_at: datetime | None = None
+
+
+class NotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    kind: str
+    message: str
+    read: bool
+    created_at: datetime
+
+
 class AuditOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int

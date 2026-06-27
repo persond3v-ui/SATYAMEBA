@@ -133,6 +133,72 @@ class Node(Base):
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class BoostStatus(str, enum.Enum):
+    pending = "pending"      # awaiting admin decision
+    approved = "approved"    # granted, not yet consumed by a launch
+    denied = "denied"        # admin refused
+    consumed = "consumed"    # used by one launch (the one-session grant is spent)
+    expired = "expired"      # granted but the session ended without use / revoked
+
+
+class GpuBoostRequest(Base):
+    """A user's request to run multi-GPU / cross-node training (Kaggle-style).
+
+    An admin approves it; the grant is good for exactly **one session** (one
+    notebook launch), then it flips to ``consumed``. The scheduler spreads the
+    boosted job across whatever GPU nodes are free at launch time."""
+
+    __tablename__ = "gpu_boost_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    gpus: Mapped[int] = mapped_column(Integer, default=2)        # GPU nodes requested
+    reason: Mapped[str] = mapped_column(String(512), default="")
+    status: Mapped[BoostStatus] = mapped_column(
+        Enum(BoostStatus), default=BoostStatus.pending, nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(36), nullable=True)   # admin id
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NotebookRun(Base):
+    """Authoritative placement record. The gateway *decides* the node and the
+    sharing mode (the Hub/Swarm just honour the constraint we pass), so we know
+    exactly how loaded each node is and who is sharing with whom."""
+
+    __tablename__ = "notebook_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    node_hostname: Mapped[str] = mapped_column(String(255), default="", index=True)
+    profile: Mapped[str] = mapped_column(String(32), default="medium")
+    mode: Mapped[str] = mapped_column(String(16), default="exclusive")  # exclusive|shared|boost
+    gpus: Mapped[int] = mapped_column(Integer, default=0)
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    boost_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)  # active|stopped
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    extra: Mapped[dict] = mapped_column(JSONType, default=dict)   # ddp_nodes, rdzv, …
+
+
+class Notification(Base):
+    """An in-app message for a user (sharing started, boost approved, queued→free)."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="info")  # info|success|warning|boost
+    message: Mapped[str] = mapped_column(String(512), default="")
+    read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
 class AuditLog(Base):
     """Append-only audit trail. Every privileged action lands here, chained with
     a hash of the previous row so tampering is detectable (OWASP A09)."""

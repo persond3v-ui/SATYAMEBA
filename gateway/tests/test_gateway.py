@@ -195,6 +195,86 @@ def test_owner_is_protected(client, admin):
                        content=body).status_code == 403
 
 
+def test_boost_request_approve_and_schedule(client, admin, monkeypatch):
+    import app.hub as hub
+
+    async def _noop(*a, **k):
+        return None
+
+    async def _empty(*a, **k):
+        return []
+
+    monkeypatch.setattr(hub, "ensure_user", _noop)
+    monkeypatch.setattr(hub, "start_server", _noop)
+    monkeypatch.setattr(hub, "stop_server", _noop)
+    monkeypatch.setattr(hub, "list_active", _empty)
+
+    make_user(client, admin, "booster")
+    c = login(client, "booster").json()
+    at, sk = c["access_token"], c["signing_key"]
+
+    # user asks for a boost
+    rb = json.dumps({"gpus": 3, "reason": "training run"}).encode()
+    r = client.post("/api/notebooks/boost/request",
+                    headers=_sign(at, sk, "POST", "/api/notebooks/boost/request", rb), content=rb)
+    assert r.status_code == 201, r.text
+    bid = r.json()["id"]
+    assert r.json()["status"] == "pending"
+
+    # admin sees it pending and approves (adjusting to 2)
+    boosts = client.get("/api/admin/boosts", headers=_hdr(admin["access_token"])).json()
+    assert any(b["id"] == bid for b in boosts)
+    ab = json.dumps({"gpus": 2}).encode()
+    ap = f"/api/admin/boosts/{bid}/approve"
+    r = client.post(ap, headers=_sign(admin["access_token"], admin["signing_key"], "POST", ap, ab),
+                    content=ab)
+    assert r.status_code == 200 and r.json()["status"] == "approved" and r.json()["gpus"] == 2
+
+    # user is notified
+    notes = client.get("/api/notebooks/notifications", headers=_hdr(at)).json()
+    assert any("approv" in n["message"].lower() for n in notes)
+
+    # launching consumes the one-session grant and reports boost mode
+    lb = json.dumps({"profile": "gpu"}).encode()
+    r = client.post("/api/notebooks/launch",
+                    headers=_sign(at, sk, "POST", "/api/notebooks/launch", lb), content=lb)
+    assert r.status_code == 200, r.text
+    assert r.json()["mode"] == "boost"
+    assert client.get("/api/notebooks/boost/mine", headers=_hdr(at)).json()["status"] == "consumed"
+
+    # cluster status now shows an active run for this user
+    cl = client.get("/api/notebooks/cluster", headers=_hdr(at)).json()
+    assert cl["you"]["active"] is True
+
+
+def test_node_drain_and_activate(client, admin):
+    from app.security import internal_token
+
+    host = "worker-drain-1"
+    tok = internal_token(host)
+    reg = client.post("/api/nodes/register",
+                      headers={"X-SAT-Node-Token": tok},
+                      json={"hostname": host, "ip": "10.0.0.9", "role": "worker",
+                            "labels": {"gpu": "rtx5070"}})
+    assert reg.status_code == 200, reg.text
+    nid = reg.json()["id"]
+
+    at, sk = admin["access_token"], admin["signing_key"]
+    dp = f"/api/admin/nodes/{nid}/drain"
+    r = client.post(dp, headers=_sign(at, sk, "POST", dp, b""), content=b"")
+    assert r.status_code == 200 and r.json()["status"] == "draining"
+    ap = f"/api/admin/nodes/{nid}/activate"
+    r = client.post(ap, headers=_sign(at, sk, "POST", ap, b""), content=b"")
+    assert r.status_code == 200 and r.json()["status"] == "online"
+
+
+def test_audit_csv_export(client, admin):
+    r = client.get("/api/admin/audit/export.csv", headers=_hdr(admin["access_token"]))
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    assert r.text.splitlines()[0] == "id,timestamp,actor,action,target,ip,detail"
+
+
 def test_metrics_endpoint(client):
     client.get("/healthz")
     assert "satyameba_http_requests_total" in client.get("/metrics").text
