@@ -152,7 +152,8 @@ SATYAMEBA/
 
 ```bash
 make help          # list everything
-make up            # single-host stack up
+make scan USERS=16 # size .env to this host's storage/RAM/CPU for N users
+make up            # build images (incl. notebook) + start single-host stack
 make logs          # tail logs
 make obfuscate     # build edge with obfuscated client JS
 make sign KEY="Samaraho Mukherjee <you@example.com>" TAG=v0.1.0   # sign release
@@ -167,12 +168,26 @@ make verify        # verify integrity + ownership signature
   ./scripts/verify_release.sh && gpg --verify SHA256SUMS.asc SHA256SUMS
   ```
 
-## Roadmap (post-core)
+## Characteristics, limits & status
 
-- True SSO between the SPA and the Hub (one click, no second login).
-- gVisor/Kata sandbox runtime option for container-escape defense.
-- Per-user/group GPU & runtime quotas with billing-style usage reports.
-- Redis-backed distributed rate limiting for multi-replica gateways.
+- **[`docs/CHARACTERISTICS.md`](docs/CHARACTERISTICS.md)** — capabilities,
+  resource profiles, storage behaviour, ports, scaling, HA limits, and every
+  default you need to know.
+- **[`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md)** — self-audited flaw log with
+  status (most now fixed: SSO, profiles, shared datasets, live Prometheus metrics,
+  Redis-shared limits, GPU swarm runtime, tests/CI…).
+
+Headline features now in: one-click **SSO** into JupyterLab, **resource profiles**
+(Small/Medium/Large/GPU), a **shared dataset volume**, **no upload cap**,
+**storage-aware sizing** (`make scan`), live cluster metrics pulled straight from
+Prometheus into the admin Overview, and a committed **test suite + CI**.
+
+## Remaining hardening (needs your infra/hardware)
+
+- Replicated Postgres for full HA (single-manager master is still a SPOF).
+- gVisor/Kata sandbox runtime for container-escape defense.
+- Hard per-user disk quotas (enable XFS prjquota).
+- Verify GPU passthrough into a spawned notebook on real RTX 5070 hardware.
 
 ---
 

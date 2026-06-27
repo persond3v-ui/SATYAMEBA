@@ -15,13 +15,14 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 
-MODE="swarm"; ADV=""; GPU=0; DOMAIN="satyameba.local"
+MODE="swarm"; ADV=""; GPU=0; DOMAIN="satyameba.local"; USERS=8
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --single) MODE="compose" ;;
     --advertise-addr) ADV="$2"; shift ;;
     --gpu) GPU=1 ;;
     --domain) DOMAIN="$2"; shift ;;
+    --users) USERS="$2"; shift ;;
     *) echo "unknown arg: $1"; exit 1 ;;
   esac; shift
 done
@@ -36,6 +37,15 @@ say "Advertise address: ${ADV:-<unset>}   mode: $MODE   domain: $DOMAIN"
 
 say "Generating secrets…"
 bash scripts/gen_secrets.sh --domain="$DOMAIN"
+
+say "Scanning host storage / RAM / CPU and sizing for ${USERS} users…"
+bash scripts/scan_resources.sh --users "$USERS"
+
+if [[ $GPU -eq 1 ]] || command -v nvidia-smi >/dev/null 2>&1; then
+  say "Configuring NVIDIA GPU runtime for Swarm…"
+  GPU_RES="$(grep '^SAT_GPU_RESOURCE=' .env | cut -d= -f2-)"; GPU_RES="${GPU_RES:-gpu}"
+  bash scripts/setup_gpu_runtime.sh "$GPU_RES" || say "GPU runtime setup skipped/failed (continuing)."
+fi
 
 say "Building images (gateway, jupyterhub, edge, notebook)…"
 docker build -q -t satyameba/gateway:latest ./gateway

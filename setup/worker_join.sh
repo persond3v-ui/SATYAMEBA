@@ -45,6 +45,12 @@ else
   docker swarm join --token "$JOIN_TOKEN" "${MASTER_IP}:2377"
 fi
 
+# 1b. Configure the GPU runtime so this node advertises its GPUs to Swarm.
+if [[ $GPU -eq 1 ]]; then
+  say "Configuring NVIDIA GPU runtime…"
+  bash scripts/setup_gpu_runtime.sh gpu || say "GPU runtime setup skipped/failed (continuing)."
+fi
+
 # 2. Build the notebook sandbox image locally.
 say "Building notebook sandbox image…"
 NB_GPU_ARG=$([[ $GPU -eq 1 ]] && echo "--build-arg SAT_GPU_BUILD=true" || echo "")

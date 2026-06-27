@@ -108,6 +108,57 @@ Run notebooks under gVisor for defense-in-depth against container escape:
 
 ## 8. TLS for production
 
-Replace `secrets/certs/satyameba.{crt,key}` with a real certificate (e.g. issue
-with certbot using the `/.well-known/acme-challenge/` location already wired in
-the edge config), then `docker compose restart edge`.
+Self-signed is the default. For a real certificate:
+
+```bash
+sudo ./scripts/issue_cert.sh --domain notebooks.mylab.edu --email you@lab.edu
+```
+
+This uses the ACME http-01 webroot already wired into the edge, copies the cert
+into `secrets/certs/`, and reloads the edge. Add a timer for `certbot renew`.
+
+## 9. Storage-aware sizing
+
+`scripts/scan_resources.sh` is run automatically by `master_init.sh`, or on
+demand:
+
+```bash
+./scripts/scan_resources.sh --users 16        # plan for 16 concurrent users
+```
+
+It scans total/free disk (Docker data root), RAM and CPU, and writes
+per-notebook RAM/CPU plus a per-user storage share into `.env`. For a **hard**
+per-user disk quota set `SAT_STORAGE_QUOTA_ENFORCE=true` — this needs an XFS
+prjquota-enabled Docker storage driver; otherwise the limit is advisory.
+
+## 10. High availability (reducing the master SPOF)
+
+A single manager keeps the DB/edge as a single point of failure. To harden:
+
+1. **Three managers (quorum).** Promote two workers:
+   ```bash
+   # on the master:
+   docker node promote <node2> <node3>
+   ```
+   Swarm tolerates one manager loss with three managers.
+2. **Replicate Postgres.** The shipped `db` is single-instance. Point
+   `SAT_DATABASE_URL` at an external HA Postgres (e.g. Patroni, or a managed
+   cluster) and drop the `db` service. This is the remaining manual step for true
+   HA — it is intentionally not auto-provisioned.
+3. **Edge entry point.** Run the edge on each manager and use round-robin DNS or
+   a VRRP/keepalived VIP so clients fail over.
+
+## 11. Shared datasets across nodes
+
+The `satyameba-shared` volume is node-local. For a cluster-wide shared dataset
+store, back it with NFS:
+
+```bash
+# example: create an NFS-backed docker volume named satyameba-shared on each node
+docker volume create --driver local \
+  --opt type=nfs --opt o=addr=192.168.1.10,rw \
+  --opt device=:/export/satyameba-shared satyameba-shared
+```
+
+Point all nodes at the same NFS export and every notebook sees the same
+`/home/jovyan/shared`.

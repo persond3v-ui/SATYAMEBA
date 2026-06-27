@@ -18,8 +18,29 @@ volumes:
   hubdata:
   grafana:
   prometheus:
+  satyameba-shared:          # shared dataset volume mounted into every notebook
+    name: satyameba-shared   # explicit name so the spawner mounts the same volume
 
 services:
+  # One-shot: builds the single-user notebook sandbox image so the spawner can
+  # place it. Runs `true` and exits; `docker compose up` builds it on the way.
+  notebook-image:
+    build:
+      context: ./jupyterhub/singleuser
+      args:
+        SAT_GPU_BUILD: "${SAT_GPU_ENABLED:-false}"
+    image: satyameba/notebook:latest
+    command: ["true"]
+    restart: "no"
+    profiles: ["build"]
+
+  redis:
+    image: redis:7-alpine
+    <<: *restart
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks: [satyameba_net]
+    expose: ["6379"]
+
   db:
     image: postgres:16-alpine
     <<: *restart
@@ -48,6 +69,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     expose: ["8000"]
 
   jupyterhub:
@@ -59,8 +82,13 @@ services:
       SAT_NOTEBOOK_IMAGE: ${SAT_NOTEBOOK_IMAGE}
       SAT_NETWORK: ${SAT_NETWORK}
       SAT_GPU_ENABLED: ${SAT_GPU_ENABLED}
+      SAT_GPU_RESOURCE: ${SAT_GPU_RESOURCE:-gpu}
       SAT_MEM_LIMIT: ${SAT_MEM_LIMIT}
       SAT_CPU_LIMIT: ${SAT_CPU_LIMIT}
+      SAT_SHARED_VOLUME: ${SAT_SHARED_VOLUME:-satyameba-shared}
+      SAT_SHARED_MODE: ${SAT_SHARED_MODE:-rw}
+      SAT_USER_STORAGE_LIMIT_GB: ${SAT_USER_STORAGE_LIMIT_GB:-}
+      SAT_STORAGE_QUOTA_ENFORCE: ${SAT_STORAGE_QUOTA_ENFORCE:-false}
       SAT_HUB_API_TOKEN: ${SAT_HUB_API_TOKEN}
       SAT_HUB_GATEWAY_URL: http://gateway:8000
       SAT_INTERNAL_SHARED_SECRET: ${SAT_INTERNAL_SHARED_SECRET}
@@ -80,6 +108,7 @@ services:
       - "443:443"
     volumes:
       - ./secrets/certs:/etc/nginx/certs:ro
+      - ./var/www/certbot:/var/www/certbot:ro     # ACME http-01 challenge webroot
     networks: [satyameba_net]
     depends_on: [gateway, jupyterhub, grafana]
 
@@ -101,8 +130,8 @@ services:
       GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_SECURITY_ALLOW_EMBEDDING: "true"
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_ANONYMOUS_ENABLED: "false"     # require Grafana login (no anon read)
+      GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro

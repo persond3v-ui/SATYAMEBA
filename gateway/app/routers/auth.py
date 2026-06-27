@@ -13,6 +13,7 @@ from ..database import get_db
 from ..deps import get_current_session
 from ..models import User, UserRole, UserSession, UserStatus
 from ..schemas import (
+    ChangePasswordRequest,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
@@ -180,6 +181,28 @@ def logout(request: Request, pair=Depends(get_current_session), db: Session = De
     db.commit()
     audit.record(db, action="user.logout", actor_id=user.id, actor_label=user.username,
                  ip=_client_ip(request))
+    return None
+
+
+@router.post("/change-password", status_code=204)
+def change_password(
+    payload: ChangePasswordRequest,
+    request: Request,
+    pair=Depends(get_current_session),
+    db: Session = Depends(get_db),
+):
+    user, current = pair
+    if not verify_password(payload.old_password, user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is incorrect")
+    user.password_hash = hash_password(payload.new_password)
+    # Invalidate every other session; keep the one making the change.
+    for s in db.execute(
+        select(UserSession).where(UserSession.user_id == user.id, UserSession.id != current.id)
+    ).scalars():
+        s.revoked = True
+    db.commit()
+    audit.record(db, action="user.change_password", actor_id=user.id,
+                 actor_label=user.username, ip=_client_ip(request))
     return None
 
 

@@ -12,11 +12,39 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..database import get_db
-from ..models import User, UserRole, UserStatus
+from ..models import SsoToken, User, UserRole, UserStatus
 from ..security import verify_internal_token, verify_password
+from ..timeutil import aware, utcnow
 
 router = APIRouter(prefix="/api/internal", tags=["internal"])
 settings = get_settings()
+
+
+@router.post("/redeem-ott")
+def redeem_ott(
+    body: dict,
+    x_sat_internal: str = Header(default=""),
+    db: Session = Depends(get_db),
+):
+    """Redeem a single-use SSO token (called by the Hub's SSO login handler).
+
+    Validates the token is present, unused and unexpired, marks it used, and
+    returns the Hub identity for the still-approved user.
+    """
+    if x_sat_internal != settings.internal_shared_secret:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad internal auth")
+    token = (body or {}).get("token", "")
+    row = db.get(SsoToken, token)
+    if row is None or row.used or aware(row.expires_at) < utcnow():
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or expired token")
+    row.used = True
+    db.commit()
+    user = db.execute(
+        select(User).where(User.username == row.username)
+    ).scalar_one_or_none()
+    if user is None or user.status != UserStatus.approved:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not approved")
+    return {"name": user.username, "admin": user.role == UserRole.admin}
 
 
 @router.post("/authenticate")

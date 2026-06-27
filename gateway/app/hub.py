@@ -37,9 +37,10 @@ async def delete_user(username: str) -> None:
         await c.delete(f"/users/{username}", headers=_headers())
 
 
-async def start_server(username: str) -> str:
+async def start_server(username: str, options: dict | None = None) -> str:
     async with httpx.AsyncClient(base_url=settings.hub_api_url, timeout=30) as c:
-        await c.post(f"/users/{username}/server", headers=_headers())
+        # Body becomes the spawner's user_options (drives the resource profile).
+        await c.post(f"/users/{username}/server", headers=_headers(), json=options or {})
     return f"{settings.hub_public_url}/user/{username}/"
 
 

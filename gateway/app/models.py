@@ -89,6 +89,21 @@ class UserSession(Base):
     user: Mapped["User"] = relationship(back_populates="sessions")
 
 
+class SsoToken(Base):
+    """A single-use, short-lived token that lets the SPA hand a logged-in user
+    off to JupyterHub without a second login. Stored in the DB so it works
+    across multiple gateway replicas."""
+
+    __tablename__ = "sso_tokens"
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    profile: Mapped[str] = mapped_column(String(32), default="medium")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+
 class NodeStatus(str, enum.Enum):
     online = "online"
     draining = "draining"

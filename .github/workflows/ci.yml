@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  gateway-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install gateway deps
+        run: pip install -r gateway/requirements.txt pytest
+      - name: Run gateway test suite
+        run: pytest gateway/tests -q
+
+  client-signing-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Verify browser HMAC matches server HMAC
+        run: |
+          pip install pyjwt cryptography
+          python - <<'PY'
+          import hashlib, hmac
+          key="00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+          method,path,ts,nonce="POST","/api/admin/users/approve","1700000000","deadbeefcafebabe"
+          body=b'{"user_id":"abc","role":"user"}'
+          bh=hashlib.sha256(body).hexdigest()
+          canon="\n".join([method,path,ts,nonce,bh])
+          sig=hmac.new(bytes.fromhex(key),canon.encode(),hashlib.sha256).hexdigest()
+          open("py_sig.txt","w").write(sig)
+          print("py",sig)
+          PY
+          node - <<'JS'
+          const {createHash,createHmac}=require("crypto");
+          const key="00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+          const [method,path,ts,nonce]=["POST","/api/admin/users/approve","1700000000","deadbeefcafebabe"];
+          const body=Buffer.from('{"user_id":"abc","role":"user"}',"utf8");
+          const bh=createHash("sha256").update(body).digest("hex");
+          const canon=[method,path,ts,nonce,bh].join("\n");
+          const sig=createHmac("sha256",Buffer.from(key,"hex")).update(Buffer.from(canon,"utf8")).digest("hex");
+          require("fs").writeFileSync("js_sig.txt",sig);
+          console.log("js",sig);
+          JS
+          test "$(cat py_sig.txt)" = "$(cat js_sig.txt)" && echo "PARITY OK" || (echo "MISMATCH" && exit 1)
+
+  compose-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render secrets + validate compose
+        run: |
+          cp .env.example .env
+          mkdir -p secrets/certs
+          openssl genrsa -out secrets/jwt_private.pem 2048
+          openssl rsa -in secrets/jwt_private.pem -pubout -out secrets/jwt_public.pem
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout secrets/certs/satyameba.key \
+            -out secrets/certs/satyameba.crt -days 1 -subj "/CN=localhost"
+          docker compose config -q && echo "single-host compose OK"

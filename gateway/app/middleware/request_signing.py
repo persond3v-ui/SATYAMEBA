@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import json
 import time
-from collections import OrderedDict
 
 from sqlalchemy import select
 
 from ..config import get_settings
 from ..database import SessionLocal
 from ..models import UserSession
+from ..ratestore import store
 from ..security import decode_token, verify_signature
 
 settings = get_settings()
@@ -43,27 +43,9 @@ _EXEMPT_PREFIXES = (
 )
 
 
-class _NonceCache:
-    def __init__(self, capacity: int = 50_000) -> None:
-        self._d: "OrderedDict[str, float]" = OrderedDict()
-        self._cap = capacity
-
-    def seen(self, nonce: str, ttl: float) -> bool:
-        now = time.time()
-        while self._d and next(iter(self._d.values())) < now - ttl:
-            self._d.popitem(last=False)
-        if nonce in self._d:
-            return True
-        self._d[nonce] = now
-        if len(self._d) > self._cap:
-            self._d.popitem(last=False)
-        return False
-
-
 class RequestSigningMiddleware:
     def __init__(self, app) -> None:
         self.app = app
-        self._nonces = _NonceCache()
 
     async def _reject(self, send, status: int, detail: str) -> None:
         body = json.dumps({"detail": detail}).encode()
@@ -117,7 +99,7 @@ class RequestSigningMiddleware:
             return await self._reject(send, 400, "Bad timestamp")
         if skew > settings.request_signing_skew_seconds:
             return await self._reject(send, 401, "Signature timestamp outside window")
-        if self._nonces.seen(nonce, settings.request_signing_skew_seconds * 2):
+        if store.seen_nonce(nonce, settings.request_signing_skew_seconds * 2):
             return await self._reject(send, 401, "Replay detected")
 
         auth = headers.get("authorization", "")

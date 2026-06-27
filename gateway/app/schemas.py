@@ -48,10 +48,32 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(max_length=128)
+    new_password: str = Field(min_length=10, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def _strength(cls, v: str) -> str:
+        classes = [
+            any(c.islower() for c in v),
+            any(c.isupper() for c in v),
+            any(c.isdigit() for c in v),
+            any(not c.isalnum() for c in v),
+        ]
+        if sum(classes) < 3:
+            raise ValueError(
+                "Password must mix at least three of: lowercase, uppercase, digit, symbol."
+            )
+        return v
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
-    email: EmailStr
+    # plain str on output: the value was validated at registration, and EmailStr
+    # would reject already-stored addresses on reserved domains (e.g. .local).
+    email: str
     username: str
     full_name: str
     role: str

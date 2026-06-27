@@ -5,17 +5,31 @@ recorded in the tamper-evident audit chain.
 """
 from __future__ import annotations
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import audit, hub
+from ..config import get_settings
 from ..database import get_db
 from ..deps import require_admin
 from ..models import AuditLog, Node, User, UserRole, UserSession, UserStatus
 from ..schemas import ApproveRequest, AuditOut, NodeOut, RejectRequest, UserOut
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+settings = get_settings()
+
+# A small allow-list of named PromQL queries the dashboard can run. Keeping it
+# server-side avoids exposing arbitrary query execution and keeps the SPA simple.
+METRIC_QUERIES = {
+    "cpu_busy": '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100)',
+    "mem_used": "(1 - (sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes))) * 100",
+    "disk_used": '(1 - (sum(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}) / sum(node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}))) * 100',
+    "gpu_util": "avg(DCGM_FI_DEV_GPU_UTIL)",
+    "net_rx": 'sum(rate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*"}[2m]))',
+    "nodes_up": "count(up == 1)",
+}
 
 
 def _ip(request: Request) -> str:
@@ -171,6 +185,30 @@ def audit_log(
 def audit_verify(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     ok, bad = audit.verify_chain(db)
     return {"intact": ok, "first_tampered_id": bad}
+
+
+@router.get("/metrics/live")
+async def metrics_live(admin: User = Depends(require_admin)):
+    """Pull live cluster numbers straight from Prometheus for the dashboard.
+
+    Returns a flat {name: value|null} map for the allow-listed queries so the
+    admin Overview can show CPU/RAM/disk/GPU/network on the go.
+    """
+    out: dict[str, float | None] = {}
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            for name, q in METRIC_QUERIES.items():
+                try:
+                    r = await client.get(
+                        f"{settings.prometheus_url}/api/v1/query", params={"query": q}
+                    )
+                    result = r.json().get("data", {}).get("result", [])
+                    out[name] = float(result[0]["value"][1]) if result else None
+                except Exception:
+                    out[name] = None
+    except Exception:
+        out = {k: None for k in METRIC_QUERIES}
+    return out
 
 
 @router.get("/stats")

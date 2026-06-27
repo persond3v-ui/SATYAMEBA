@@ -180,6 +180,8 @@ class SetupApp(tk.Tk):
         self.btn_gpu.pack(side="left", padx=4)
         self.btn_docker_group = ttk.Button(btns, text="Add me to docker group", command=self._add_docker_group)
         self.btn_docker_group.pack(side="left", padx=4)
+        self.btn_scan = ttk.Button(btns, text="Scan storage & resources", command=self._scan_resources)
+        self.btn_scan.pack(side="left", padx=4)
 
         # Role / bootstrap
         role = ttk.LabelFrame(self, text=" Bootstrap this node ")
@@ -197,8 +199,9 @@ class SetupApp(tk.Tk):
         self._add_field(role, "advertise", "Master/advertise IP", "", 1, 2)
         self._add_field(role, "join", "Swarm join-token (worker)", "", 2, 0)
         self._add_field(role, "secret", "Node secret (worker)", "", 2, 2)
+        self._add_field(role, "users", "Plan for N users", "8", 3, 0)
         self.btn_boot = ttk.Button(role, text="Bootstrap node ▶", command=self._bootstrap)
-        self.btn_boot.grid(row=3, column=0, columnspan=4, pady=8)
+        self.btn_boot.grid(row=4, column=0, columnspan=4, pady=8)
 
         # Log
         logf = ttk.Frame(self); logf.pack(fill="both", expand=True, padx=16, pady=(0, 12))
@@ -242,14 +245,16 @@ class SetupApp(tk.Tk):
                 elif kind == "statusbar":
                     self.statusvar.set(payload)
                 elif kind == "enable":
-                    for b in (self.btn_check, self.btn_fix, self.btn_gpu, self.btn_boot, self.btn_docker_group):
+                    for b in (self.btn_check, self.btn_fix, self.btn_gpu, self.btn_boot,
+                              self.btn_docker_group, self.btn_scan):
                         b.config(state="normal")
         except queue.Empty:
             pass
         self.after(100, self._drain_queue)
 
     def _disable_buttons(self) -> None:
-        for b in (self.btn_check, self.btn_fix, self.btn_gpu, self.btn_boot, self.btn_docker_group):
+        for b in (self.btn_check, self.btn_fix, self.btn_gpu, self.btn_boot,
+                  self.btn_docker_group, self.btn_scan):
             b.config(state="disabled")
 
     def _run(self, cmd: list[str]) -> int:
@@ -350,6 +355,21 @@ class SetupApp(tk.Tk):
         self._logln(f"  ✔ Added {user} to the docker group. Log out/in to take effect.")
         self.q.put(("statusbar", f"{user} added to docker group (re-login needed)."))
 
+    def _scan_resources(self) -> None:
+        self._thread(self._do_scan_resources)
+
+    def _do_scan_resources(self) -> None:
+        self.q.put(("statusbar", "Scanning storage / RAM / CPU…"))
+        # Ensure a .env exists so the scan can write into it.
+        if not (REPO_ROOT / ".env").exists():
+            self._run(["bash", str(REPO_ROOT / "scripts" / "gen_secrets.sh")])
+        users = self.fields.get("users")
+        n = (users.get().strip() if users else "") or "8"
+        self._logln("\n=== Storage & resource scan ===")
+        rc = self._run(["bash", str(REPO_ROOT / "scripts" / "scan_resources.sh"), "--users", n])
+        self.q.put(("statusbar", "Scan complete — allocations written to .env."
+                    if rc == 0 else "Scan failed — see log."))
+
     def _bootstrap(self) -> None:
         self._thread(self._do_bootstrap)
 
@@ -359,7 +379,9 @@ class SetupApp(tk.Tk):
         domain = self.fields["domain"].get().strip() or "satyameba.local"
         adv = self.fields["advertise"].get().strip()
         if role == "master":
-            cmd = ["bash", str(REPO_ROOT / "setup" / "master_init.sh"), "--domain", domain]
+            users = (self.fields["users"].get().strip() or "8")
+            cmd = ["bash", str(REPO_ROOT / "setup" / "master_init.sh"),
+                   "--domain", domain, "--users", users]
             if self.singlevar.get():
                 cmd.append("--single")
             if adv:

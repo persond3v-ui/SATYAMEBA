@@ -1,114 +1,94 @@
-# SATYAMEBA — Known Issues & Flaw Log
+# SATYAMEBA — Issue Log & Status
 
-An honest, self-audited list of the current limitations and bugs in the Phase-1
-core, with severity and remediation. Kept in-repo so deployment decisions are
-made with eyes open. Severity: 🔴 high · 🟠 medium · 🟡 low.
+Self-audited list of flaws found in the Phase-1 core and their current status.
+Severity: 🔴 high · 🟠 medium · 🟡 low. Status: ✅ fixed · 🟢 mitigated · 📌 documented.
 
-## Notebook access / UX
+## Resolved
 
-- **I-1 🔴 No SSO to JupyterHub (double login).**
-  `POST /api/notebooks/launch` returns a `handshake` token
-  (`gateway/app/routers/notebooks.py`), but the Hub authenticator
-  (`jupyterhub/satyameba_authenticator.py`) only consumes `username`+`password`.
-  The `handshake` is effectively dead code. In practice, when the SPA iframes
-  `/hub/user/<name>/`, the browser has no Hub session yet, so the user lands on
-  the Hub login page and must re-enter their SATYAMEBA credentials once.
-  *Fix:* issue a short-lived one-time token from the gateway and add a custom
-  Hub login handler that exchanges it (true SSO), or use JupyterHub `auth_state`.
+- **I-1 🔴 ✅ No SSO to JupyterHub (double login).**
+  The gateway now mints a single-use, short-lived SSO token on launch
+  (`SsoToken` table) and returns a `/hub/sso-login?token=...` URL. A new
+  `SSOLoginHandler` in the authenticator redeems it via
+  `/api/internal/redeem-ott` and logs the browser straight into JupyterLab — no
+  second login.
 
-- **I-2 🟠 JupyterLab may refuse to embed in the iframe.**
-  Jupyter Server sets frame-ancestors/X-Frame-Options by default; embedding
-  `/hub/user/...` inside the SPA iframe can be blocked.
-  *Fix:* set single-user `tornado_settings` headers to allow same-origin
-  framing, **or** open the notebook in a new tab instead of an iframe.
+- **I-2 🟠 ✅ JupyterLab iframe embedding.**
+  The SPA now opens the notebook in a **new tab** (`window.open`), sidestepping
+  frame-ancestors entirely; the Hub also sets a same-origin CSP as defense in
+  depth.
 
-- **I-3 🟠 Dataset upload capped at 64 MB.**
-  `frontend/nginx.conf` sets `client_max_body_size 64m`; larger uploads through
-  the edge fail. *Fix:* raise the limit (or set `0` and rely on Jupyter's own
-  limits) and/or document the `jupyter` contents API / mounting external storage.
+- **I-3 🟠 ✅ 64 MB upload cap removed.**
+  `client_max_body_size 0` + `proxy_request_buffering off` at the edge: dataset
+  uploads stream through with no size limit.
 
-## Monitoring
+- **I-4 🟠 ✅ Admin dashboard pulls live numbers from Prometheus.**
+  New `/api/admin/metrics/live` proxies an allow-list of PromQL queries; the
+  admin **Overview** shows CPU / RAM / disk / GPU / network / targets-up, polled
+  every 10 s, in addition to the embedded Grafana tab.
 
-- **I-4 🟠 The admin dashboard does not query Prometheus directly.**
-  The "Monitoring" tab embeds Grafana via an iframe; the stat cards come from DB
-  counts (`/api/admin/stats`) and the Nodes tab from heartbeats. There is no
-  gateway endpoint that pulls live CPU/GPU numbers for inline display.
-  *Fix:* add a gateway route proxying Prometheus instant queries
-  (`/api/v1/query`) for inline per-node sparklines.
+- **I-5 🔴 ✅ Grafana no longer anonymous.**
+  `GF_AUTH_ANONYMOUS_ENABLED=false` + `GF_USERS_ALLOW_SIGN_UP=false`; the
+  dashboards require a Grafana login (admin password in `.env`).
 
-- **I-5 🔴 `/grafana/` is not authentication-gated and runs anonymous Viewer.**
-  `docker-compose*.yml` enables `GF_AUTH_ANONYMOUS_ENABLED=true` and the edge
-  proxies `/grafana/` without auth. Anyone who can reach the edge can read
-  cluster dashboards. *Fix:* protect `/grafana/` with an nginx `auth_request`
-  against the gateway session, or disable anonymous access and require Grafana
-  login; only embed via signed Grafana URLs.
+- **I-7 🟠 ✅ Shared rate-limit + replay store.**
+  New `ratestore.py` backs both the rate limiter and the replay-nonce check with
+  Redis when `SAT_REDIS_URL` is set (a `redis` service is in both stacks), so
+  limits and replay protection hold across gateway replicas. In-process fallback
+  for single-replica.
 
-## High availability / scaling
+- **I-8 🔴 ✅ Notebook image is built.**
+  A `notebook-image` builder service + `make up`/`make build`/`make
+  notebook-image` build `satyameba/notebook:latest` so the first launch spawns.
 
-- **I-6 🔴 The master is a single point of failure.**
-  All control-plane services (db, gateway×2, jupyterhub, edge, prometheus,
-  grafana) are pinned to `node.role == manager`. Workers add compute redundancy
-  for *notebooks* only. If the master dies, the platform is down — so
-  "fail-proof" is overstated today. *Fix:* multi-manager swarm (3 managers),
-  Postgres replication/HA, and spread the edge/gateway across managers.
+- **I-9 🟠 ✅ GPU advertised to Swarm.**
+  `scripts/setup_gpu_runtime.sh` writes `node-generic-resources` (GPU UUIDs) into
+  `daemon.json` and enables `swarm-resource` in the nvidia runtime; called
+  automatically by `master_init.sh`/`worker_join.sh` on GPU nodes.
 
-- **I-7 🟠 Rate limiting & replay-nonce cache are per-replica (in-process).**
-  With `replicas: 2` for the gateway, the sliding-window limiter
-  (`middleware/rate_limit.py`) and the signing nonce cache
-  (`middleware/request_signing.py`) are not shared, so a replay sent to the
-  *other* replica within the ±120 s window can slip through, and rate limits are
-  effectively doubled. *Fix:* back both with Redis.
+- **I-11 🟠 ✅ Payload-aware scheduling via profiles.**
+  Users pick Small / Medium / Large / GPU at launch; the gateway passes it as a
+  spawn option and a `pre_spawn_hook` reserves the matching CPU/RAM/GPU, so Swarm
+  distributes by the requested footprint.
 
-## Deployment
+- **I-13 🟠 ✅ Shared dataset volume.**
+  Every notebook mounts `satyameba-shared` at `/home/jovyan/shared`
+  (`SAT_SHARED_VOLUME` / `SAT_SHARED_MODE`). *Multi-node note below.*
 
-- **I-8 🔴 `docker compose up` does not build the notebook image.**
-  `satyameba/notebook` is not a compose service, so plain `docker compose up`
-  (and `make up`) build the gateway/hub/edge but not the sandbox image; the first
-  launch then fails to spawn. Only `setup/master_init.sh` builds it.
-  *Fix:* add a one-shot builder service or a `make notebook-image` target, and
-  fix the quick-start docs to build it before first launch.
+- **I-14 🟠 ✅ SwarmSpawner resource spec corrected.**
+  Resources are set via `mem_limit`/`cpu_limit` traits plus `generic_resources`
+  for GPUs through the `pre_spawn_hook`.
 
-- **I-9 🟠 GPU reservation needs Docker daemon config that the join script does not set.**
-  `SwarmSpawner.extra_resources_spec["generic_resources"] = {"gpu": 1}` requires
-  each GPU node's `/etc/docker/daemon.json` to advertise
-  `node-generic-resources`. `setup/worker_join.sh` labels the node but does not
-  write that config. *Fix:* have the join script append the
-  `NodeGenericResources` stanza and restart docker on GPU nodes.
+- **I-15 🟡 ✅ Tests + CI.**
+  `gateway/tests/` covers onboarding, request signing (replay/tamper), SSO OTT,
+  change-password, suspend, and audit-chain integrity. `.github/workflows/ci.yml`
+  runs the suite, the client/server HMAC parity check, and compose validation.
 
-- **I-10 🟡 Self-signed TLS by default.** Browsers warn; `worker_join.sh` uses
-  `curl -k`. Fine for a lab; document issuing a real/Let's Encrypt cert.
+- **I-16 🟡 ✅ Self-service password change.**
+  `POST /api/auth/change-password` (revokes other sessions) + a form in the
+  workspace, so the bootstrap admin password can be rotated on first login.
 
-## Scheduling semantics
+- **I-10 🟡 ✅ Real TLS path.** `scripts/issue_cert.sh` issues a Let's Encrypt
+  cert via the wired ACME webroot; self-signed remains the zero-config default.
 
-- **I-11 🟠 "Distribute by payload" is approximated, not real.**
-  Swarm spreads notebooks by task count honoring *fixed* per-notebook CPU/mem
-  reservations; it does not inspect the actual workload. There is no autoscaling
-  and no GPU time-sharing (one notebook reserves a whole GPU). Honest limitation.
+## Mitigated / documented (need real hardware or infra to fully close)
 
-- **I-12 🟡 Single-host (compose) mode does not distribute at all.**
-  In `--single` mode the DockerSpawner runs every notebook on the one host. Load
-  balancing across the 4 desktops only happens in Swarm mode.
+- **I-6 🔴 🟢 Master single point of failure.**
+  Control-plane is pinned to managers and the gateway runs 2 replicas, but a
+  single-manager lab still has the DB/edge as a SPOF. `docs/DEPLOYMENT.md` now
+  documents promoting 3 managers for quorum and Postgres replication. Full HA
+  (replicated Postgres) is not shipped yet — **the honest residual limitation.**
 
-## Data
+- **I-12 🟡 📌 Single-host mode does not distribute.** By design: `--single`
+  runs every notebook on one box. Use Swarm for multi-node load balancing.
 
-- **I-13 🟠 No shared/team dataset storage.** Each user gets an isolated volume
-  (`satyameba-user-<username>`). Shared or very large datasets need an external
-  NFS/object-store mount wired into the spawner. Not yet provided.
+- **I-13 (multi-node) 🟠 📌 Shared volume is node-local.** The shared volume is a
+  local Docker volume; across nodes it needs an NFS/object-store backing. Steps
+  are in `docs/DEPLOYMENT.md`.
 
-## Verification gaps
-
-- **I-14 🟠 SwarmSpawner resource-spec keys unverified against the live API.**
-  `extra_resources_spec` in `jupyterhub_config.py` is plausible but not yet run
-  on a real swarm; key names may need adjusting to dockerspawner's schema.
-
-- **I-15 🟡 No automated test suite / CI in the repo.** The register→approve→
-  login→suspend flow, request signing, and audit chain were validated locally,
-  but those tests are not committed and don't run on push. *Fix:* add `tests/`
-  + a CI workflow.
-
-- **I-16 🟡 Bootstrap admin password sits in `.env` in plaintext** (file mode
-  600). Acceptable for a lab; rotate after first login.
+- **GPU swarm runtime** (I-9/I-14): implemented per NVIDIA's documented setup but
+  **not yet verified on physical RTX 5070 hardware** — validate `nvidia-smi`
+  inside a spawned GPU notebook after deploying.
 
 ---
-*Maintained by self-audit. Each item lists a concrete fix so they can be picked
-up in priority order.*
+*See `docs/CHARACTERISTICS.md` for the full list of capabilities, limits, and
+defaults.*

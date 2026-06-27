@@ -110,8 +110,10 @@ export const api = {
   login: (p) => request("POST", "/api/auth/login", p),
   logout: () => request("POST", "/api/auth/logout"),
   me: () => request("GET", "/api/auth/me"),
+  changePassword: (old_password, new_password) =>
+    request("POST", "/api/auth/change-password", { old_password, new_password }),
 
-  launch: () => request("POST", "/api/notebooks/launch"),
+  launch: (profile = "medium") => request("POST", "/api/notebooks/launch", { profile }),
   stopNotebook: () => request("POST", "/api/notebooks/stop"),
   notebookStatus: () => request("GET", "/api/notebooks/status"),
 
@@ -124,6 +126,7 @@ export const api = {
   suspend: (user_id) => request("POST", `/api/admin/users/${user_id}/suspend`),
   reinstate: (user_id) => request("POST", `/api/admin/users/${user_id}/reinstate`),
   nodes: () => request("GET", "/api/admin/nodes"),
+  metricsLive: () => request("GET", "/api/admin/metrics/live"),
   activeSessions: () => request("GET", "/api/admin/sessions/active"),
   audit: (limit = 100) => request("GET", `/api/admin/audit?limit=${limit}`),
   auditVerify: () => request("GET", "/api/admin/audit/verify"),

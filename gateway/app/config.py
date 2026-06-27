@@ -57,6 +57,21 @@ class Settings(BaseSettings):
     # --- internal shared secret (gateway <-> hub authenticator) ---
     internal_shared_secret: str = "CHANGE_ME_internal_secret"
 
+    # --- single sign-on one-time tokens (SPA -> Hub, no second login) ---
+    sso_token_ttl_seconds: int = 60
+
+    # --- monitoring proxy (admin dashboard pulls live numbers from here) ---
+    prometheus_url: str = "http://prometheus:9090"
+
+    # --- redis (shared rate-limit + replay-nonce store across replicas) ---
+    redis_url: str = ""  # empty => in-process fallback (single replica only)
+
+    # --- resource / storage policy (populated by scan_resources.sh) ---
+    expected_users: int = 8
+    user_storage_limit_gb: int = 20
+    free_storage_gb: int = 0
+    total_storage_gb: int = 0
+
     # --- security knobs ---
     cors_origins: Annotated[List[str], NoDecode] = [
         "https://localhost", "https://satyameba.local"

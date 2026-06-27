@@ -6,6 +6,7 @@ const nav = document.getElementById("nav");
 const toastEl = document.getElementById("toast");
 
 let me = null; // current user
+let liveTimer = null; // admin live-metrics poller
 
 const GRAFANA_URL = window.SAT_GRAFANA_URL || "/grafana/";
 
@@ -103,31 +104,52 @@ async function workspaceView() {
       <div class="muted">Hello ${esc(me.full_name || me.username)}</div>
       <div class="big">Your private notebook environment</div>
       <p class="muted">Spin up an isolated JupyterLab on the cluster. Your work is
-         saved in a private volume that follows your account.</p>
+         saved in a private volume that follows your account; shared datasets live
+         in <code>/home/jovyan/shared</code>.</p>
+      <div style="max-width:320px;margin:0 auto">
+        <label>Resource profile</label>
+        <select id="profile">
+          <option value="small">Small · 2 GB · 1 CPU</option>
+          <option value="medium" selected>Medium · 4 GB · 2 CPU</option>
+          <option value="large">Large · 8 GB · 4 CPU</option>
+          <option value="gpu">GPU · 8 GB · 4 CPU · 1 GPU</option>
+        </select>
+      </div>
       <div class="btn-row" style="justify-content:center">
-        <button id="launch">🚀 Launch / open notebook</button>
+        <button id="launch">🚀 Launch notebook (new tab)</button>
         <button class="secondary" id="stop">Stop server</button>
       </div>
       <p class="hint" id="state"></p>
     </div>
-    <div class="card hidden" id="frameCard">
-      <div class="iframe-wrap"><iframe id="nb" title="notebook"></iframe></div>
+
+    <div class="card" style="max-width:420px">
+      <h2>Change password</h2>
+      <label>Current password</label><input id="op" type="password" autocomplete="current-password" />
+      <label>New password</label><input id="np" type="password" autocomplete="new-password" />
+      <p class="hint">Min 10 chars, mixing 3 of: lower, upper, digit, symbol.</p>
+      <div class="btn-row"><button class="secondary" id="chpw">Update password</button></div>
     </div>`;
   const state = view.querySelector("#state");
   refreshNbStatus(state);
   view.querySelector("#launch").onclick = async () => {
-    state.textContent = "Starting your server… this can take a moment on first launch.";
+    const profile = view.querySelector("#profile").value;
+    state.textContent = "Starting your server… opening in a new tab (first launch can take a moment).";
     try {
-      const r = await api.launch();
-      const card = view.querySelector("#frameCard");
-      card.classList.remove("hidden");
-      view.querySelector("#nb").src = r.url;
-      state.textContent = "Server running.";
+      const r = await api.launch(profile);
+      window.open(r.url, "_blank", "noopener");
+      state.textContent = "Server starting — switch to the new tab for JupyterLab.";
     } catch (e) { toast(e.message, "bad"); state.textContent = e.message; }
   };
   view.querySelector("#stop").onclick = async () => {
     try { await api.stopNotebook(); toast("Server stopped", "ok"); refreshNbStatus(state); }
     catch (e) { toast(e.message, "bad"); }
+  };
+  view.querySelector("#chpw").onclick = async () => {
+    try {
+      await api.changePassword(view.querySelector("#op").value, view.querySelector("#np").value);
+      toast("Password updated", "ok");
+      view.querySelector("#op").value = ""; view.querySelector("#np").value = "";
+    } catch (e) { toast(e.message, "bad"); }
   };
 }
 async function refreshNbStatus(el) {
@@ -138,6 +160,7 @@ async function refreshNbStatus(el) {
 // --------------------------------------------------------------- admin views
 const adminTabs = ["Overview", "Approvals", "Users", "Nodes", "Sessions", "Monitoring", "Audit"];
 async function adminView(tab = "Overview") {
+  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   view.innerHTML = `
     <h1>Admin control plane</h1>
     <div class="tabs" id="tabs"></div>
@@ -171,10 +194,40 @@ async function renderOverview(p) {
     <div class="stat"><div class="n">${u.suspended || 0}</div><div class="l">Suspended</div></div>
     <div class="stat"><div class="n">${s.nodes || 0}</div><div class="l">Cluster nodes</div></div>
   </div>
+
   <div class="card" style="margin-top:18px">
+    <h2>Live cluster <span class="muted" style="font-size:.8rem">· direct from Prometheus, refreshing</span></h2>
+    <div class="grid" id="live">
+      <div class="stat"><div class="n" id="m_cpu">—</div><div class="l">CPU busy %</div></div>
+      <div class="stat"><div class="n" id="m_mem">—</div><div class="l">Memory used %</div></div>
+      <div class="stat"><div class="n" id="m_disk">—</div><div class="l">Disk used %</div></div>
+      <div class="stat"><div class="n" id="m_gpu">—</div><div class="l">GPU util %</div></div>
+      <div class="stat"><div class="n" id="m_net">—</div><div class="l">Net RX MB/s</div></div>
+      <div class="stat"><div class="n" id="m_up">—</div><div class="l">Targets up</div></div>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>Audit chain integrity</h2>
     <p class="muted" id="chain">checking…</p>
   </div>`;
+
+  const fmt = (v, d = 1) => (v === null || v === undefined ? "—" : Number(v).toFixed(d));
+  async function pollLive() {
+    try {
+      const m = await api.metricsLive();
+      const set = (id, v) => { const el = p.querySelector(id); if (el) el.textContent = v; };
+      set("#m_cpu", fmt(m.cpu_busy));
+      set("#m_mem", fmt(m.mem_used));
+      set("#m_disk", fmt(m.disk_used));
+      set("#m_gpu", m.gpu_util === null ? "n/a" : fmt(m.gpu_util));
+      set("#m_net", m.net_rx === null ? "—" : fmt(m.net_rx / 1e6, 2));
+      set("#m_up", m.nodes_up === null ? "—" : fmt(m.nodes_up, 0));
+    } catch (_) {}
+  }
+  pollLive();
+  liveTimer = setInterval(pollLive, 10000);
+
   try {
     const v = await api.auditVerify();
     p.querySelector("#chain").innerHTML = v.intact
@@ -286,6 +339,7 @@ async function bootstrapMe() {
   }
 }
 async function route() {
+  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   await bootstrapMe();
   renderNav();
   const hash = location.hash || (me ? "#/app" : "#/login");
