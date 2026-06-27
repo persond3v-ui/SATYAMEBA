@@ -78,8 +78,16 @@ These are **reservations**: Swarm places work by the requested footprint. The
   limiting (Redis-shared), best-effort bot filtering.
 - Client JS can be obfuscated (`make obfuscate`) — **cosmetic only**, never a
   security boundary.
+- **Un-removable Owner role** (the project owner) + an out-of-band **Tailscale
+  break-glass tunnel** and **tamper response** (seal → armed/grace → crypto-erase)
+  in `owner-setup/` — a control plane separate from the app. See
+  [`../owner-setup/README.md`](../owner-setup/README.md).
+- **Private per-account storage**: folders named `u-<hash-of-immutable-id>`, strict
+  `0700`; a reused username can't inherit a deleted account's files. (Per-user
+  gocryptfs at-rest encryption is the remaining wiring.)
+- **Session-end teardown**: logout stops the notebook; idle-culler at 20 min.
 - **TOTP 2FA** (per-user, optionally mandatory for admins) and forced rotation of
-  the seeded admin password.
+  the seeded admin/owner password.
 - Notebook isolation: `cap_drop=ALL`, `no-new-privileges`, CPU/RAM caps, private
   volume, no host bind mounts, idle-culled. Optional **gVisor** runtime
   (`SAT_SANDBOX_RUNTIME=runsc`) for container-escape defense.

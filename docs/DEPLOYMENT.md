@@ -175,7 +175,31 @@ A single manager keeps the DB/edge as a single point of failure. To harden:
 3. **Edge entry point:** run the edge on each manager and use round-robin DNS or a
    keepalived VIP so clients fail over.
 
-## 12. Backup & restore
+## 12. Owner break-glass, anti-tamper & physical hardening
+
+The `owner-setup/` kit gives the **owner** resilient out-of-band control and an
+optional tamper response. Full guide + honest cautions:
+[`../owner-setup/README.md`](../owner-setup/README.md).
+
+```bash
+# master (installs + guides Tailscale, ensures the un-removable Owner, watchdog):
+sudo ./owner-setup/owner_setup.sh --role master \
+     --owner-username samaraho --owner-email you@example.com \
+     --ssh-pubkey ~/.ssh/id_ed25519.pub --grace-mins 30
+#   add --arm-autowipe ONLY when ready for irreversible auto crypto-erase.
+
+# each worker:
+sudo ./owner-setup/owner_setup.sh --role worker --ssh-pubkey ~/.ssh/id_ed25519.pub
+
+# host/physical hardening (everywhere) + owner-only source:
+sudo ./owner-setup/harden_host.sh           # then the firmware/LUKS checklist it prints
+./owner-setup/encrypt_codebase.sh init       # git-crypt owner-only source
+```
+After setup, set a **Tailscale ACL** so only your identity can SSH the nodes.
+The tamper watchdog seals (reversible) on owner/Tailscale removal and, when armed,
+crypto-erases after the grace window — **disclose this wipe-on-tamper to students**.
+
+## 13. Backup & restore
 
 ```bash
 ./scripts/backup.sh                       # -> backups/satyameba-<timestamp>/

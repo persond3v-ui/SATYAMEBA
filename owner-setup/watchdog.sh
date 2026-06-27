@@ -37,26 +37,30 @@ owner_present() {
 mkdir -p "$STATE_DIR"
 
 if tailscale_ok && owner_present; then
-  rm -f "$TAMPER_MARK" 2>/dev/null || true   # all clear
+  if [[ -f "$TAMPER_MARK" ]]; then
+    rm -f "$TAMPER_MARK"
+    alert "Owner control RESTORED — clear the seal and redeploy when ready."
+  fi
   exit 0
 fi
 
 # --- tamper detected ---
-reason="$( { tailscale_ok || echo 'tailscale-missing'; }; { owner_present || echo 'owner-removed'; } )"
-log "TAMPER detected: ${reason}"
-[[ -f "$TAMPER_MARK" ]] || date +%s > "$TAMPER_MARK"
-seal   # immediate: halt + lock + alert
+if [[ ! -f "$TAMPER_MARK" ]]; then
+  # First detection only: record, seal once, alert once (no per-tick spam).
+  reason="$( { tailscale_ok || echo 'tailscale-missing'; }; { owner_present || echo 'owner-removed'; } )"
+  log "TAMPER detected: ${reason}"
+  date +%s > "$TAMPER_MARK"
+  seal
+  [[ "$ARM_AUTOWIPE" == "1" ]] \
+    && alert "Auto-wipe ARMED — crypto-erase in ${GRACE_MINS}m unless restored. Cancel via the tunnel." \
+    || alert "Auto-wipe NOT armed — staying sealed. Restore access or run panic.sh."
+fi
 
+# On every subsequent tick while tamper persists: only escalate if armed.
 if [[ "$ARM_AUTOWIPE" == "1" ]]; then
-  since="$(cat "$TAMPER_MARK" 2>/dev/null || echo "$(date +%s)")"
-  elapsed_min=$(( ( $(date +%s) - since ) / 60 ))
-  remaining=$(( GRACE_MINS - elapsed_min ))
-  if (( elapsed_min >= GRACE_MINS )); then
+  since="$(cat "$TAMPER_MARK" 2>/dev/null || date +%s)"
+  if (( ( $(date +%s) - since ) / 60 >= GRACE_MINS )); then
     alert "Auto-wipe grace (${GRACE_MINS}m) EXCEEDED — crypto-erasing now."
     wipe
-  else
-    alert "Tamper persists; auto-wipe in ${remaining}m unless restored. Cancel via the tunnel."
   fi
-else
-  alert "Auto-wipe NOT armed — staying sealed. Restore owner/Tailscale, or run panic.sh to wipe."
 fi

@@ -15,7 +15,7 @@ import secrets
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from starlette.responses import PlainTextResponse
 
@@ -62,10 +62,32 @@ def _assert_production_secrets(s=None) -> None:
         )
 
 
+def _ensure_role_enum() -> None:
+    """Idempotent micro-migration: make sure the Postgres 'role' enum has all
+    current values. ``create_all`` never alters an existing enum type, so on an
+    upgraded database the new 'owner' value would otherwise be missing and the
+    owner account could not be created. (No-op on SQLite / fresh deploys.)"""
+    if engine.dialect.name != "postgresql":
+        return
+    try:
+        with engine.connect() as c:
+            c = c.execution_options(isolation_level="AUTOCOMMIT")
+            row = c.execute(text(
+                "SELECT udt_name FROM information_schema.columns "
+                "WHERE table_name='users' AND column_name='role'"
+            )).fetchone()
+            if row and row[0]:
+                for val in ("user", "admin", "owner"):
+                    c.execute(text(f'ALTER TYPE "{row[0]}" ADD VALUE IF NOT EXISTS \'{val}\''))
+    except Exception:
+        logger.exception("role-enum ensure failed (non-fatal)")
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     _assert_production_secrets()
     Base.metadata.create_all(bind=engine)
+    _ensure_role_enum()
     _ensure_bootstrap_admin()
 
     async def _maintenance_loop():

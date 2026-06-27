@@ -67,6 +67,20 @@ Each user's notebook runs in its own container with:
 > under gVisor (`runsc`) or Kata Containers — documented in DEPLOYMENT.md as an
 > optional hardening step.
 
+## Owner control plane (break-glass)
+
+A separate, out-of-band layer that survives a hostile co-admin (`owner-setup/`):
+- **Un-removable Owner role** — cannot be demoted/suspended/deleted by anyone, and
+  nobody can be promoted to owner.
+- **Tailscale tunnel** — outbound-only WireGuard (no router config), SSO + ACL,
+  super-user SSH to any node from anywhere; independent of the app's admin model.
+- **Tamper watchdog** — if the Owner account or Tailscale is removed, the platform
+  **seals** (halt + lock + alert) and, when **armed**, **crypto-erases** all data
+  after a grace window (two-stage so a blip can't nuke the lab). Owner-triggered
+  **panic** wipe too. *Crypto-erase destroys keys, not via slow overwrite; it is
+  irreversible — disclose wipe-on-tamper to students for consent.*
+- **Physical hardening** (`harden_host.sh`) + LUKS/BIOS/TPM/Secure-Boot checklist.
+
 ## Additional hardening
 
 - **TOTP two-factor auth.** Any user can enrol a TOTP authenticator

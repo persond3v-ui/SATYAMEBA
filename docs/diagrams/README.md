@@ -31,6 +31,13 @@ The Gateway decomposed into its processes (middleware chain, auth, admin,
 notebooks, nodes, internal, maintenance) and the Postgres tables they touch, plus
 the Edge and Hub sub-processes.
 
+## Owner break-glass & tamper control plane
+![Owner control plane](owner_control.png)
+
+The out-of-band owner control plane (Tailscale tunnel + un-removable Owner role +
+tamper watchdog → seal → crypto-erase + keystore), separate from the app so a
+hostile co-admin can't lock you out.
+
 ## Lifecycle flowchart
 ![Flowchart](flowchart.png)
 
@@ -62,7 +69,9 @@ security path called out.
 | # | Finding | Severity | Status |
 |---|---------|----------|--------|
 | **N1** | `SAT_INTERNAL_SHARED_SECRET` overloaded; was also the TOTP encryption key. | 🟠 | ✅ Fixed — dedicated `SAT_DATA_ENCRYPTION_KEY`. |
-| **N2/N3** | Deleting a user removes the row but **not** the per-user volume / Hub state; a **re-registered same username could inherit old files**. | 🔴 | 📌 Open — documented; mitigations below. |
+| **N2/N3** | A re-registered same username could inherit a deleted user's files. | 🔴→✅ | **Fixed** — storage keyed by a hash of the immutable account id (`u-<hash>`). |
+| **F1** | New `owner` enum value missing on **existing** Postgres DBs (create_all can't migrate). | 🔴→✅ | **Fixed** — startup `ALTER TYPE … ADD VALUE IF NOT EXISTS`. |
+| **F2** | Watchdog re-sealed/alerted every 2-min tick (spam + repeated stack-down). | 🟠→✅ | **Fixed** — seal/alert once per tamper transition. |
 | **N9** | Two gateway replicas race on first-run bootstrap-admin insert. | 🟡 | ✅ Fixed — `IntegrityError` is caught. |
 | **N10** | Schema changes rely on `create_all`; **upgrading an existing DB misses new columns** (no Alembic). | 🟠 | 📌 Open — needs Alembic or documented manual DDL. |
 | **N13** | SPA logout ends the SPA session but not the Hub cookie/notebook in the other tab (suspend/delete do). | 🟡 | 📌 Open — minor. |

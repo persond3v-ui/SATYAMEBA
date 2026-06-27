@@ -235,9 +235,9 @@ def level1():
     c.flaw(300, 720, 250, "N1", ["Internal secret is overloaded (node",
                                  "HMAC + Hub auth + SSO). Now decoupled",
                                  "from TOTP encryption key (fixed)."], target=gw.bottom, sev=OK)
-    c.flaw(1300, 330, 300, "N2/N3", ["Deleting a user does NOT remove D3",
-                                     "volume → storage leak, and a reused",
-                                     "username could inherit old files."], target=d3.right, sev=BAD)
+    c.flaw(1300, 330, 300, "N2/N3 ✓", ["FIXED: storage keyed by a hash of the",
+                                       "immutable account id (u-<hash>) — reused",
+                                       "usernames can't inherit old files."], target=d3.right, sev=OK)
     c.flaw(1300, 470, 300, "N13", ["SPA logout does not end the Hub",
                                    "session in the other tab (suspend",
                                    "does, via hub.delete_user)."], target=hub.bottom, sev=WARN)
@@ -394,9 +394,58 @@ def flowchart():
     c.render("flowchart")
 
 
+def owner_control():
+    c = C(1480, 900, "SATYAMEBA — Owner break-glass & tamper control plane")
+    legend(c, 28, 64)
+
+    owner = c.entity(40, 150, 200, 90, "Owner (you)", ["laptop / phone", "Samaraho Mukherjee"])
+    ts = c.box(330, 150, 220, 90, "Tailscale", ["WireGuard mesh", "outbound-only · SSO · ACL"], stroke=ACCENT)
+    master = c.box(640, 130, 200, 130, "Master", ["gateway · db · hub", "tailscaled --ssh", "watchdog + keystore"], stroke=BLUE)
+    w = []
+    for i in range(3):
+        w.append(c.box(900 + i * 190, 130, 170, 90, f"Worker {i+1}", ["tailscaled --ssh", "notebooks"], stroke=OK))
+
+    c.flow(owner.right, ts.left, "SSH (super-user)", both=True, dash=True, color=OK, lx=290, ly=180)
+    c.flow(ts.right, master.left, "outbound", both=True, dash=True, color=OK, lx=600, ly=180)
+    for wb in w:
+        c.flow(ts.p(0.7, 1.0), wb.bottom, color=OK, dash=True)
+
+    # Owner role + watchdog logic on the master
+    d1 = c.store(640, 320, 200, 44, "T1", "users (role=owner)")
+    keystore = c.store(640, 400, 200, 44, "K", "keystore (root KEK)")
+    d3 = c.store(900, 320, 250, 44, "D3", "u-<hash> encrypted store")
+
+    wd = c.box(360, 360, 220, 110, "Watchdog", ["every 2 min", "owner present? tailscale up?"], stroke=WARN)
+    c.flow(wd.right, d1.left, "check", lx=610, ly=345)
+    c.flow(master.bottom, d1.top, color=PURPLE)
+    c.flow(master.bottom, keystore.top, color=PURPLE, lx=720, ly=300)
+    c.flow((900, 200), d3.top, "spawn → mount", lx=980, ly=290)
+
+    seal = c.box(360, 520, 150, 56, "SEAL", ["halt + lock + alert"], stroke=ACCENT)
+    wipe = c.box(560, 520, 200, 56, "CRYPTO-ERASE", ["shred KEK → ciphertext"], stroke=BAD)
+    c.flow(wd.bottom, seal.top, "tamper", color=BAD, lx=420, ly=500)
+    c.flow(seal.right, wipe.left, "armed + grace exceeded", color=BAD, lx=535, ly=508)
+    c.flow(wipe.right, keystore.bottom, "destroys", color=BAD, dash=True, lx=640, ly=500)
+
+    c.note(800, 470, 380, [
+        "Separate control plane from the app: a hostile co-admin",
+        "demoting you in SATYAMEBA can't touch Tailscale or the",
+        "un-removable Owner role. Seal is reversible; wipe is not.",
+    ], color=BLUE, title="Why it survives takeover")
+    c.flaw(800, 600, 380, "F1 ✓", ["FIXED: startup ensures the Postgres 'owner'",
+                                   "enum value exists (create_all can't migrate it)."], sev=OK)
+    c.flaw(800, 680, 380, "F2 ✓", ["FIXED: watchdog seals/alerts once per tamper",
+                                   "transition (no per-tick spam)."], sev=OK)
+    c.flaw(360, 620, 410, "limits", ["Running notebooks/processes need plaintext (root on a",
+                                     "node can read live data/code). gocryptfs mount is the",
+                                     "remaining wiring. Physical: LUKS/BIOS/TPM/locked rack."], sev=WARN)
+    c.render("owner_control")
+
+
 if __name__ == "__main__":
     level0()
     level1()
     level2()
     flowchart()
+    owner_control()
     print("done")
