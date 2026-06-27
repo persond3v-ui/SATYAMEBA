@@ -2,7 +2,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 
-.PHONY: help secrets scan notebook-image up down logs build ps single master sign verify obfuscate clean
+.PHONY: help secrets scan notebook-image up down logs build ps single master sign verify obfuscate clean backup restore
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -46,6 +46,12 @@ verify: ## Verify the ownership manifest & signature
 
 obfuscate: ## Build the edge image with obfuscated client JS
 	docker build --build-arg OBFUSCATE=true -t satyameba/edge:latest ./frontend
+
+backup: ## Back up DB + secrets to backups/
+	bash scripts/backup.sh
+
+restore: ## Restore from a backup (DIR=backups/satyameba-...)
+	bash scripts/restore.sh $(DIR)
 
 clean: ## Remove containers, networks and volumes (DESTRUCTIVE)
 	docker compose down -v

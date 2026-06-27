@@ -3,7 +3,38 @@
 Self-audited list of flaws found in the Phase-1 core and their current status.
 Severity: 🔴 high · 🟠 medium · 🟡 low. Status: ✅ fixed · 🟢 mitigated · 📌 documented.
 
-## Resolved
+## Resolved — production-readiness round
+
+- **N-1 🔴 ✅ Per-user work was node-local in Swarm (data loss across nodes).**
+  New `host`/NFS storage mode: `scripts/setup_nfs.sh` exports `/srv/satyameba`
+  and mounts it on every node; the Hub pre-creates per-user dirs (owned by the
+  notebook UID) so `/home/jovyan/work` and `/home/jovyan/shared` follow users
+  wherever Swarm places them. Wired via `--nfs` / `--nfs-server`.
+
+- **I-6 🔴 ✅→🟢 Master SPOF reduced.** `scripts/promote_managers.sh` for
+  3-manager quorum + `docker-compose.external-db.yml` to run against an external
+  HA Postgres. Residual: you must supply the replicated Postgres (documented).
+
+- **N-2 🟠 ✅ Backup/restore.** `scripts/backup.sh` (pg_dump + env/secrets) and
+  `scripts/restore.sh`.
+
+- **N-3 🟠 ✅ Unbounded `sso_tokens`/sessions.** A maintenance loop
+  (`maintenance.py`, started by the app lifespan) purges used/expired SSO tokens
+  and dead sessions every 15 min.
+
+- **N-4 🟡 ✅ SSO open redirect.** The login handler now rejects non-relative
+  `next` targets.
+
+- **N-5 🟡 ✅ Slow `metrics_live`.** Prometheus queries now run concurrently
+  (`asyncio.gather`, 2 s timeout).
+
+- **N-6 🟡 ✅ Dead metric.** Real request metrics + latency histogram via
+  `MetricsMiddleware`; `/metrics` now reflects live traffic.
+
+- **N-7 🟡 ✅ Friendly launch error + lifespan.** Launch returns 502 (not 500)
+  when the Hub is down; startup migrated off the deprecated `on_event`.
+
+## Resolved — first round
 
 - **I-1 🔴 ✅ No SSO to JupyterHub (double login).**
   The gateway now mints a single-use, short-lived SSO token on launch

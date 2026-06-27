@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from urllib.parse import urlparse
 
 from jupyterhub.auth import Authenticator
 from jupyterhub.handlers import BaseHandler
@@ -80,6 +81,8 @@ class SSOLoginHandler(BaseHandler):
         user = await self.login_user({"ott": token})
         if user is None:
             raise web.HTTPError(403, "invalid or expired SSO token")
-        if not nxt:
+        # Only allow same-site, path-relative redirects (no open redirect).
+        parsed = urlparse(nxt)
+        if not nxt or parsed.scheme or parsed.netloc or nxt.startswith("//"):
             nxt = url_path_join(self.hub.base_url, "user", user.name) + "/"
         self.redirect(nxt)

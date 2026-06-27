@@ -14,7 +14,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 
-MASTER_IP=""; JOIN_TOKEN=""; NODE_SECRET=""; GATEWAY=""; GPU=0; MASTER_SSH=""
+MASTER_IP=""; JOIN_TOKEN=""; NODE_SECRET=""; GATEWAY=""; GPU=0; MASTER_SSH=""; NFS_SERVER=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --master-ip) MASTER_IP="$2"; shift ;;
@@ -23,6 +23,7 @@ while [[ $# -gt 0 ]]; do
     --gateway) GATEWAY="$2"; shift ;;
     --gpu) GPU=1 ;;
     --master-ssh) MASTER_SSH="$2"; shift ;;
+    --nfs-server) NFS_SERVER="$2"; shift ;;
     *) echo "unknown arg: $1"; exit 1 ;;
   esac; shift
 done
@@ -49,6 +50,12 @@ fi
 if [[ $GPU -eq 1 ]]; then
   say "Configuring NVIDIA GPU runtime…"
   bash scripts/setup_gpu_runtime.sh gpu || say "GPU runtime setup skipped/failed (continuing)."
+fi
+
+# 1c. Mount the shared NFS store so per-user work follows users to this node.
+if [[ -n "$NFS_SERVER" ]]; then
+  say "Mounting shared NFS storage from ${NFS_SERVER}…"
+  bash scripts/setup_nfs.sh client --server "$NFS_SERVER" || say "NFS mount failed (continuing)."
 fi
 
 # 2. Build the notebook sandbox image locally.

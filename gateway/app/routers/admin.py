@@ -5,6 +5,8 @@ recorded in the tamper-evident audit chain.
 """
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
@@ -194,21 +196,22 @@ async def metrics_live(admin: User = Depends(require_admin)):
     Returns a flat {name: value|null} map for the allow-listed queries so the
     admin Overview can show CPU/RAM/disk/GPU/network on the go.
     """
-    out: dict[str, float | None] = {}
+    async def _one(client, name, q):
+        try:
+            r = await client.get(f"{settings.prometheus_url}/api/v1/query", params={"query": q})
+            result = r.json().get("data", {}).get("result", [])
+            return name, (float(result[0]["value"][1]) if result else None)
+        except Exception:
+            return name, None
+
     try:
-        async with httpx.AsyncClient(timeout=4) as client:
-            for name, q in METRIC_QUERIES.items():
-                try:
-                    r = await client.get(
-                        f"{settings.prometheus_url}/api/v1/query", params={"query": q}
-                    )
-                    result = r.json().get("data", {}).get("result", [])
-                    out[name] = float(result[0]["value"][1]) if result else None
-                except Exception:
-                    out[name] = None
+        async with httpx.AsyncClient(timeout=2) as client:
+            pairs = await asyncio.gather(
+                *(_one(client, name, q) for name, q in METRIC_QUERIES.items())
+            )
+        return dict(pairs)
     except Exception:
-        out = {k: None for k in METRIC_QUERIES}
-    return out
+        return {k: None for k in METRIC_QUERIES}
 
 
 @router.get("/stats")

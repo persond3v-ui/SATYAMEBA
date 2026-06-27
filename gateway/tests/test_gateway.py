@@ -126,6 +126,18 @@ def test_change_password_and_session_revocation(client):
                        json={"username": "bob", "password": "N3w#Pass!234"}).status_code == 200
 
 
+def test_metrics_endpoint(client):
+    client.get("/healthz")
+    body = client.get("/metrics").text
+    assert "satyameba_http_requests_total" in body
+
+
+def test_maintenance_cleanup_runs(client):
+    from app.maintenance import cleanup_once
+    res = cleanup_once()
+    assert set(res) == {"sso_tokens", "sessions"}
+
+
 def test_suspend_and_audit_chain(client):
     tok = _admin(client)
     at, sk = tok["access_token"], tok["signing_key"]

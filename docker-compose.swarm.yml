@@ -77,12 +77,16 @@ services:
       SAT_CPU_LIMIT: ${SAT_CPU_LIMIT}
       SAT_SHARED_VOLUME: ${SAT_SHARED_VOLUME:-satyameba-shared}
       SAT_SHARED_MODE: ${SAT_SHARED_MODE:-rw}
+      SAT_USER_STORAGE_MODE: ${SAT_USER_STORAGE_MODE:-volume}
+      SAT_USER_HOST_BASE: ${SAT_USER_HOST_BASE:-/srv/satyameba/users}
+      SAT_SHARED_HOST_PATH: ${SAT_SHARED_HOST_PATH:-/srv/satyameba/shared}
       SAT_HUB_API_TOKEN: ${SAT_HUB_API_TOKEN}
       SAT_HUB_GATEWAY_URL: http://gateway:8000
       SAT_INTERNAL_SHARED_SECRET: ${SAT_INTERNAL_SHARED_SECRET}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - hubdata:/srv/jupyterhub
+      - /srv/satyameba:/srv/satyameba          # NFS share: Hub pre-creates user dirs
     networks: [satyameba_net]
     deploy:
       placement: { constraints: ["node.role == manager"] }   # needs swarm API

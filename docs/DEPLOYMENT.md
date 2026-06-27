@@ -131,34 +131,57 @@ per-notebook RAM/CPU plus a per-user storage share into `.env`. For a **hard**
 per-user disk quota set `SAT_STORAGE_QUOTA_ENFORCE=true` — this needs an XFS
 prjquota-enabled Docker storage driver; otherwise the limit is advisory.
 
-## 10. High availability (reducing the master SPOF)
+## 10. Shared storage so user work follows them across nodes (NFS)
+
+By default per-user `/work` is a **node-local** volume — if Swarm places a user
+on a different node next time, their previous work isn't there. Turn on
+**host/NFS storage mode** so every node sees the same data.
+
+Automated path — add `--nfs` on the master and `--nfs-server <ip>` on workers:
+
+```bash
+# master:
+./setup/master_init.sh --advertise-addr 192.168.1.10 --nfs
+
+# each worker (the master prints this with the token):
+sudo ./setup/worker_join.sh --master-ip 192.168.1.10 --join-token ... \
+     --node-secret ... --gateway https://192.168.1.10 --nfs-server 192.168.1.10
+```
+
+This runs `scripts/setup_nfs.sh` (server on the master, client mount on workers),
+exports `/srv/satyameba` to the VLAN, mounts it at the same path everywhere, and
+sets `SAT_USER_STORAGE_MODE=host`. The Hub pre-creates each user's dir on the
+share (owned by the notebook UID), and both `/home/jovyan/work` and
+`/home/jovyan/shared` are then cluster-wide. Keep NFS on a **trusted VLAN** only
+(it uses `no_root_squash`).
+
+## 11. High availability (reducing the master SPOF)
 
 A single manager keeps the DB/edge as a single point of failure. To harden:
 
-1. **Three managers (quorum).** Promote two workers:
+1. **Three managers (quorum):**
    ```bash
-   # on the master:
-   docker node promote <node2> <node3>
+   ./scripts/promote_managers.sh worker2 worker3   # run on the master
    ```
-   Swarm tolerates one manager loss with three managers.
-2. **Replicate Postgres.** The shipped `db` is single-instance. Point
-   `SAT_DATABASE_URL` at an external HA Postgres (e.g. Patroni, or a managed
-   cluster) and drop the `db` service. This is the remaining manual step for true
-   HA — it is intentionally not auto-provisioned.
-3. **Edge entry point.** Run the edge on each manager and use round-robin DNS or
-   a VRRP/keepalived VIP so clients fail over.
+   Swarm tolerates one manager loss with three managers (use an odd count).
+2. **Replicate Postgres** and point `SAT_DATABASE_URL` at it, then deploy with
+   the external-db overlay so the bundled db carries no tasks:
+   ```bash
+   docker stack deploy -c docker-compose.swarm.yml \
+                       -c docker-compose.external-db.yml satyameba
+   ```
+   Bring your own HA Postgres (Patroni / CloudNativePG / managed) — intentionally
+   not auto-provisioned.
+3. **Edge entry point:** run the edge on each manager and use round-robin DNS or a
+   keepalived VIP so clients fail over.
 
-## 11. Shared datasets across nodes
-
-The `satyameba-shared` volume is node-local. For a cluster-wide shared dataset
-store, back it with NFS:
+## 12. Backup & restore
 
 ```bash
-# example: create an NFS-backed docker volume named satyameba-shared on each node
-docker volume create --driver local \
-  --opt type=nfs --opt o=addr=192.168.1.10,rw \
-  --opt device=:/export/satyameba-shared satyameba-shared
+./scripts/backup.sh                       # -> backups/satyameba-<timestamp>/
+./scripts/restore.sh backups/satyameba-<timestamp>
 ```
 
-Point all nodes at the same NFS export and every notebook sees the same
-`/home/jovyan/shared`.
+`backup.sh` dumps Postgres and copies `.env` + `secrets/` (sensitive — store the
+archive safely). Add a cron/systemd timer for regular dumps. Also snapshot the
+NFS export (or per-user volumes) for notebook contents.

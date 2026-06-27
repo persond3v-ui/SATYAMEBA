@@ -24,6 +24,16 @@ SHARED_MODE = os.environ.get("SAT_SHARED_MODE", "rw")  # rw or ro
 STORAGE_LIMIT_GB = os.environ.get("SAT_USER_STORAGE_LIMIT_GB", "")
 STORAGE_ENFORCE = os.environ.get("SAT_STORAGE_QUOTA_ENFORCE", "false").lower() == "true"
 
+# Storage mode:
+#   volume — node-local Docker named volume (single-host default).
+#   host   — bind-mount from a host path that is the SAME on every node (an NFS
+#            mount), so a user's work follows them wherever Swarm places them.
+USER_STORAGE_MODE = os.environ.get("SAT_USER_STORAGE_MODE", "volume").lower()
+USER_HOST_BASE = os.environ.get("SAT_USER_HOST_BASE", "/srv/satyameba/users")
+SHARED_HOST_PATH = os.environ.get("SAT_SHARED_HOST_PATH", "/srv/satyameba/shared")
+NB_UID = int(os.environ.get("SAT_NB_UID", "1000"))
+NB_GID = int(os.environ.get("SAT_NB_GID", "100"))
+
 # Resource profiles (payload-aware scheduling).
 PROFILES = {
     "small":  {"mem": "2G",        "cpu": 1.0,         "gpu": 0},
@@ -68,6 +78,18 @@ def pre_spawn_hook(spawner):
             hc["storage_opt"] = {"size": f"{STORAGE_LIMIT_GB}G"}
         spawner.extra_host_config = hc
 
+    # In host/NFS mode, pre-create the user's work dir with the notebook UID so
+    # the unprivileged jovyan user can write to it (the hub bind-mounts the NFS
+    # root, so this dir is visible on every node).
+    if USER_STORAGE_MODE == "host":
+        try:
+            d = os.path.join(USER_HOST_BASE, spawner.user.name)
+            os.makedirs(d, exist_ok=True)
+            os.chown(d, NB_UID, NB_GID)
+        except Exception as exc:
+            spawner.log.warning("could not prepare host workdir for %s: %s",
+                                spawner.user.name, exc)
+
     spawner.log.info("spawning %s with profile=%s (%s, %s cpu, gpu=%s)",
                      spawner.user.name, profile, p["mem"], p["cpu"], want_gpu)
 
@@ -107,9 +129,16 @@ c.Spawner.args = [
     "--ServerApp.tornado_settings={'headers':{'Content-Security-Policy':\"frame-ancestors 'self'\"}}",
 ]
 
-_volumes = {"satyameba-user-{username}": "/home/jovyan/work"}
-if SHARED_VOLUME:
-    _volumes[SHARED_VOLUME] = {"bind": "/home/jovyan/shared", "mode": SHARED_MODE}
+if USER_STORAGE_MODE == "host":
+    # Bind-mount from a shared (NFS) host path identical on every node.
+    _volumes = {os.path.join(USER_HOST_BASE, "{username}"): "/home/jovyan/work"}
+    if SHARED_HOST_PATH:
+        _volumes[SHARED_HOST_PATH] = {"bind": "/home/jovyan/shared", "mode": SHARED_MODE}
+else:
+    # Node-local named volumes (fine for single-host).
+    _volumes = {"satyameba-user-{username}": "/home/jovyan/work"}
+    if SHARED_VOLUME:
+        _volumes[SHARED_VOLUME] = {"bind": "/home/jovyan/shared", "mode": SHARED_MODE}
 
 if SPAWNER == "swarm":
     c.JupyterHub.spawner_class = "dockerspawner.SwarmSpawner"

@@ -18,7 +18,7 @@ import secrets
 from datetime import timedelta
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from .. import audit, hub
 from ..config import get_settings
@@ -44,8 +44,14 @@ async def launch(request: Request, user: User = Depends(get_current_user), db=De
     if profile not in VALID_PROFILES:
         profile = "medium"
 
-    await hub.ensure_user(user.username)
-    await hub.start_server(user.username, options={"profile": profile})
+    try:
+        await hub.ensure_user(user.username)
+        await hub.start_server(user.username, options={"profile": profile})
+    except Exception:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "The notebook engine is temporarily unavailable. Please try again shortly.",
+        )
 
     token = secrets.token_urlsafe(32)
     db.add(SsoToken(

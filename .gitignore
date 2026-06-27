@@ -21,6 +21,7 @@ node_modules/
 *.log
 prometheus_data/
 grafana_data/
+backups/
 
 # OS
 .DS_Store

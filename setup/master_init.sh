@@ -15,7 +15,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 
-MODE="swarm"; ADV=""; GPU=0; DOMAIN="satyameba.local"; USERS=8
+MODE="swarm"; ADV=""; GPU=0; DOMAIN="satyameba.local"; USERS=8; NFS=0; NFS_SUBNET=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --single) MODE="compose" ;;
@@ -23,6 +23,8 @@ while [[ $# -gt 0 ]]; do
     --gpu) GPU=1 ;;
     --domain) DOMAIN="$2"; shift ;;
     --users) USERS="$2"; shift ;;
+    --nfs) NFS=1 ;;
+    --nfs-subnet) NFS_SUBNET="$2"; NFS=1; shift ;;
     *) echo "unknown arg: $1"; exit 1 ;;
   esac; shift
 done
@@ -40,6 +42,14 @@ bash scripts/gen_secrets.sh --domain="$DOMAIN"
 
 say "Scanning host storage / RAM / CPU and sizing for ${USERS} users…"
 bash scripts/scan_resources.sh --users "$USERS"
+
+if [[ $NFS -eq 1 ]]; then
+  [[ -z "$NFS_SUBNET" && -n "$ADV" ]] && NFS_SUBNET="$(echo "$ADV" | awk -F. '{print $1"."$2"."$3".0/24"}')"
+  say "Setting up shared NFS storage (subnet ${NFS_SUBNET}) so user work follows them across nodes…"
+  bash scripts/setup_nfs.sh server --subnet "$NFS_SUBNET"
+  sed -i 's/^SAT_USER_STORAGE_MODE=.*/SAT_USER_STORAGE_MODE=host/' .env
+  say "Per-user storage mode set to 'host' (NFS-backed)."
+fi
 
 if [[ $GPU -eq 1 ]] || command -v nvidia-smi >/dev/null 2>&1; then
   say "Configuring NVIDIA GPU runtime for Swarm…"
@@ -96,7 +106,9 @@ cat <<BANNER
         --join-token ${WORKER_TOKEN} \\
         --node-secret ${INTERNAL_SECRET} \\
         --gateway https://${ADV} \\
+        $([[ $NFS -eq 1 ]] && echo "--nfs-server ${ADV} ")\\
         [--gpu] [--master-ssh user@${ADV}]
 
+ $([[ $NFS -eq 1 ]] && echo "Shared NFS storage is ON: per-user work follows users across nodes." || echo "Tip: re-run with --nfs for shared storage so user work follows them across nodes.")
 ============================================================================
 BANNER

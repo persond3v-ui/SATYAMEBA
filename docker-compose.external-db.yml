@@ -1,0 +1,13 @@
+# HA overlay: run SATYAMEBA against an EXTERNAL / replicated Postgres instead of
+# the bundled single-instance db (removes the database single point of failure).
+#
+#   1. Stand up an HA Postgres (e.g. Patroni, CloudNativePG, or a managed cluster).
+#   2. Point SAT_DATABASE_URL in .env at it, e.g.
+#        SAT_DATABASE_URL=postgresql+psycopg2://satyameba:***@pg-vip:5432/satyameba
+#   3. Deploy with this overlay so the in-stack db carries no tasks:
+#        docker stack deploy -c docker-compose.swarm.yml \
+#                            -c docker-compose.external-db.yml satyameba
+services:
+  db:
+    deploy:
+      replicas: 0          # bundled db disabled; gateway uses SAT_DATABASE_URL

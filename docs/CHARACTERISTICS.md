@@ -46,6 +46,12 @@ These are **reservations**: Swarm places work by the requested footprint. The
 - **No upload cap**: the edge streams uploads with no size limit.
 - **Per-user volume**: `satyameba-user-<username>` → `/home/jovyan/work`.
 - **Shared volume**: `satyameba-shared` → `/home/jovyan/shared`.
+- **Storage mode** (`SAT_USER_STORAGE_MODE`): `volume` = node-local (single host
+  default); `host` = NFS path identical on every node so a user's work **follows
+  them across nodes** (enable with `--nfs` / `setup_nfs.sh`). Use `host` for any
+  real multi-node deployment.
+- **Backup/restore**: `scripts/backup.sh` (Postgres dump + `.env`/secrets) and
+  `scripts/restore.sh`.
 - **Quota enforcement is OFF by default.** `SAT_USER_STORAGE_LIMIT_GB` is an
   *advisory* allocation. Hard per-volume quotas (`SAT_STORAGE_QUOTA_ENFORCE=true`)
   require an XFS prjquota-enabled Docker storage driver; otherwise storage is
@@ -88,10 +94,12 @@ These are **reservations**: Swarm places work by the requested footprint. The
 
 ## Availability limits (important)
 
-- A **single-manager** deployment has the database and edge as a **single point
-  of failure** — if the master dies, the platform is down. Workers add notebook
-  compute redundancy only. For resilience, run **3 managers** (quorum) and
-  replicate Postgres (see DEPLOYMENT.md). Replicated Postgres is **not shipped**.
+- Swarm can run **3 managers** for quorum (`scripts/promote_managers.sh`) and the
+  control-plane services tolerate a manager loss. The **database** is the
+  remaining SPOF: the bundled Postgres is single-instance. Point
+  `SAT_DATABASE_URL` at an HA Postgres + deploy with
+  `docker-compose.external-db.yml` for full HA — you bring the replicated
+  Postgres (not auto-provisioned).
 - `--single` (compose) mode runs everything, including all notebooks, on one box.
 
 ## Defaults & key settings (`.env`)
