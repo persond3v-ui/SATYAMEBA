@@ -16,6 +16,10 @@ venv/
 # Node (only used transiently for JS obfuscation build)
 node_modules/
 
+# Manim render output
+tutorial/media/
+tutorial/__pycache__/
+
 # Runtime / data
 *.sqlite
 *.log

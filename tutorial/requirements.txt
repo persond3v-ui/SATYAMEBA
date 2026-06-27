@@ -1,0 +1,3 @@
+# SATYAMEBA tutorial videos (Manim Community Edition).
+# No LaTeX needed — the scenes use Text, not Tex.
+manim>=0.18.0
