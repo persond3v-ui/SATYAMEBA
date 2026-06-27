@@ -89,6 +89,12 @@ clients ──https(80/443)──▶ edge (nginx · TLS · SPA · reverse proxy)
 
 MASTER (swarm manager) ──:2377──▶ WORKER 1 · WORKER 2 · WORKER 3 …  (same VLAN, NFS-shared)
 ```
+
+**Data-flow diagrams** (Level 0/1/2) + a lifecycle flowchart, annotated with the
+latest scan's findings, are in [`docs/diagrams/`](docs/diagrams/README.md):
+
+![Level 1 DFD](docs/diagrams/dfd_level1.png)
+
 Full rationale: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---

@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from starlette.responses import PlainTextResponse
 
 from . import audit
@@ -136,7 +137,12 @@ def _ensure_bootstrap_admin() -> None:
             must_change_password=True,  # force rotation of the seeded password
         )
         db.add(admin_user)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Another gateway replica created the admin first — that's fine.
+            db.rollback()
+            return
         audit.record(db, action="system.bootstrap_admin", actor_label="system",
                      target=admin_user.username)
         if not settings.bootstrap_admin_password:
