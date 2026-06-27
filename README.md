@@ -5,9 +5,9 @@
 **Your own private, multi-node Jupyter cloud — a Google-Colab-style notebook
 platform that runs on your lab's own desktops.**
 
-Register → admin approves → log in → launch an **isolated** GPU notebook that the
-cluster schedules onto a free machine. Full admin control, live CPU/GPU/network/
-storage dashboards, and OWASP-aware hardening — all dockerized and plug-n-play.
+Register → an admin approves → log in → launch an **isolated** GPU notebook that
+the cluster schedules onto a free machine. Fully dockerized, security-hardened,
+plug-n-play.
 
 *Owner & author: **Samaraho Mukherjee** · © 2026 · see [`OWNERSHIP.md`](OWNERSHIP.md)*
 
@@ -15,184 +15,204 @@ storage dashboards, and OWASP-aware hardening — all dockerized and plug-n-play
 
 ---
 
-## What you get
+# 1 · Capabilities & Features
 
-- 🧑‍💻 **Colab-like workspace** — users import or create Jupyter notebooks and run
-  them on real lab hardware (i7 + RTX 5070 nodes).
-- 🛂 **Approval-gated onboarding** — anyone can register, but an **admin must
-  approve** before they can log in. Admins can suspend/“kick off” users instantly.
-- 📦 **Isolated execution** — every notebook runs in its own hardened container
-  (`cap_drop=ALL`, no host mounts, CPU/mem caps, optional GPU).
-- ⚖️ **Cluster load balancing** — Docker Swarm schedules notebooks onto whichever
-  node has capacity / a free GPU.
-- 📊 **Live monitoring** — Prometheus + Grafana show per-node CPU, GPU, network
-  and storage, embedded right in the admin dashboard.
-- 🔐 **Security-first** — TLS-only edge (just ports 80/443), RS256 JWTs, per-request
-  HMAC signing, ORM-only DB access, rate limiting, bot filtering, a tamper-evident
-  audit log, and an OWASP Top-10 mapping ([`docs/SECURITY.md`](docs/SECURITY.md)).
-- 🖱️ **tkinter setup wizard** — checks & installs every dependency (Docker, NVIDIA
-  toolkit…) with progress bars, verifies GPU passthrough, and bootstraps the node.
-- ✍️ **Cryptographically signed ownership** — `SHA256SUMS` + detached GPG signature.
+### 📓 Notebooks & workspace
+- **Colab-like experience** — full JupyterLab in the browser: write/import
+  notebooks, terminal, plots, file upload.
+- **One-click launch with SSO** — pick a profile, click Launch, and JupyterLab
+  opens in a new tab with **no second login**.
+- **Resource profiles** — *Small (2 GB/1 CPU)*, *Medium (4 GB/2 CPU)*,
+  *Large (8 GB/4 CPU)*, *GPU (8 GB/4 CPU/1 GPU)* — scheduling reserves to match.
+- **No upload cap** — bring multi-GB datasets straight into your private `/work`.
+- **Shared dataset volume** at `/home/jovyan/shared` for whole-lab data.
+- **Your work follows you** — with NFS storage mode, files persist and reappear
+  no matter which node you land on next; idle servers are auto-culled to free GPUs.
 
-> **Honesty note:** a few requested ideas can't be real security and aren't sold as
-> such — client-side JS obfuscation only slows casual snooping, and no token scheme
-> can stop a user from proxying *their own* browser session through Burp. Those are
-> handled correctly (server-side authz, short-lived signed/rotated tokens, replay
-> protection) and explained plainly in [`docs/SECURITY.md`](docs/SECURITY.md).
+### 👥 Users & administration
+- **Approval-gated onboarding** — anyone can register, but an **admin must
+  approve** before login. Reject spammers in a click.
+- **Absolute admin control** — suspend/“kick off” a user (revokes their sessions
+  and kills their notebook instantly), reinstate, grant admin.
+- **Admin dashboard** — pending approvals, all users, cluster nodes, live running
+  sessions, monitoring, and a full audit log — in one place.
+- **Tamper-evident audit log** — every privileged action is hash-chained and
+  verifiable.
+
+### ⚖️ Cluster & scheduling
+- **Master + workers over Docker Swarm** — workers join the master with a single
+  token on the same VLAN.
+- **Load balancing** — Swarm spreads notebooks across nodes by their reserved
+  footprint, and pins GPU notebooks to GPU-labelled nodes.
+- **Storage-aware sizing** — a scan reads each host's disk/RAM/CPU and sizes the
+  deployment to it.
+
+### 📊 Monitoring
+- **Prometheus + Grafana** — per-node CPU, GPU, network and storage (node-exporter
+  + cAdvisor + NVIDIA DCGM).
+- **Live numbers in the admin Overview**, pulled straight from Prometheus.
+
+### 🔐 Security (full mapping in [`docs/SECURITY.md`](docs/SECURITY.md))
+- **TLS-only edge** — only ports **80/443** are ever exposed; everything else is
+  internal.
+- **Strong auth** — bcrypt passwords, short-lived **RS256** JWTs with refresh
+  rotation, **per-request HMAC signing** (replay + tamper protection), and
+  **TOTP 2FA** (works fully offline — no third-party service).
+- **Hardened isolation** — `cap_drop=ALL`, `no-new-privileges`, CPU/RAM caps,
+  private volumes, no host mounts, plus an **optional gVisor sandbox runtime**.
+- **OWASP-aware** — ORM-only DB (no SQLi), strict validation, rate limiting,
+  security headers + **CSP**, bot filtering, forced rotation of the seeded admin
+  password.
+
+### 🧰 Operations
+- **Everything dockerized** — backend, frontend, db, hub, monitoring, and the
+  notebooks themselves. If it runs for us, it runs for you.
+- **tkinter setup wizard** — checks/installs every dependency with progress bars
+  and verifies GPU passthrough.
+- **Backup & restore**, **HA path** (3-manager quorum + external Postgres),
+  **Let's Encrypt** helper, and **cryptographically signed ownership**.
+- **Tested** — committed gateway test suite + GitHub Actions CI.
+
+> **Honest notes (also in [`docs/SECURITY.md`](docs/SECURITY.md)):** client-side
+> JS obfuscation only slows casual snooping, and no token scheme can stop a user
+> from proxying *their own* browser session — those are handled the only real way
+> (server-side authz + short-lived signed/rotated tokens + replay protection).
+> Some items need your infra: replicated Postgres, OIDC/LDAP, hard disk quotas,
+> and on-hardware GPU/gVisor verification.
+
+### Architecture at a glance
+```
+clients ──https(80/443)──▶ edge (nginx · TLS · SPA · reverse proxy)
+                              ├─▶ gateway (FastAPI + SQLAlchemy)  ──▶ postgres + redis
+                              ├─▶ jupyterhub ──spawns──▶ isolated notebook containers
+                              └─▶ grafana ◀── prometheus ◀── node-exporter / cAdvisor / DCGM
+
+MASTER (swarm manager) ──:2377──▶ WORKER 1 · WORKER 2 · WORKER 3 …  (same VLAN, NFS-shared)
+```
+Full rationale: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
-## Architecture at a glance
+# 2 · Setting up the nodes
 
-```
-clients ──https(80/443)──▶ edge(nginx, TLS, SPA, proxy)
-                              ├─▶ gateway (FastAPI + SQLAlchemy)  ──▶ postgres
-                              ├─▶ jupyterhub  ──spawns──▶ isolated notebook containers
-                              ├─▶ grafana  ◀── prometheus ◀── node-exporter / cAdvisor / DCGM
-                              └─ (everything internal; only the edge is published)
-
-MASTER (swarm manager) ──:2377──▶ WORKER 1 · WORKER 2 · WORKER 3 …  (same VLAN)
-```
-
-Full diagram and rationale: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
-
----
-
-## Quick start (one machine, ~5 minutes)
+**Prerequisites:** Debian on each box. The wizard installs the rest (Docker,
+Compose, NVIDIA driver + Container Toolkit).
 
 ```bash
 git clone <this-repo> SATYAMEBA && cd SATYAMEBA
-
-# GUI wizard: Check → Install/fix → Verify GPU → role "Master" + "Single-host"
-sudo apt-get install -y python3-tk
+sudo apt-get install -y python3-tk          # for the GUI wizard
 sudo python3 setup/satyameba_setup.py
 ```
 
-…or fully headless:
+In the wizard: **Check dependencies → Install / fix missing → Verify GPU →
+Scan storage & resources**, then **Bootstrap node**.
 
+| Wizard button | What it does |
+|---------------|--------------|
+| **1 · Check dependencies** | Probes Docker, Compose v2, NVIDIA driver + toolkit, openssl, curl, git. |
+| **2 · Install / fix missing** | Installs/repairs from the official Docker & NVIDIA apt repos. |
+| **3 · Verify GPU passthrough** | Runs `docker run --gpus all … nvidia-smi` to prove containers see the GPU. |
+| **Scan storage & resources** | Sizes per-user RAM/CPU/storage in `.env` to this host. |
+| **Add me to docker group** | `usermod -aG docker $USER` (run docker without sudo). |
+| **Bootstrap node ▶** | Runs the master or worker bootstrap with your chosen options. |
+
+### Option A — one machine (quickest, ~5 min)
+Pick **Master + “Single-host”** in the wizard, or headless:
 ```bash
-./setup/master_init.sh --single --gpu        # builds, generates secrets, starts
+./setup/master_init.sh --single --gpu
 ```
+Open **https://localhost/**. The admin username/password are saved in `.env`
+(`SAT_BOOTSTRAP_ADMIN_*`); the dashboard prompts you to change it on first login.
 
-Open **https://localhost/**. Your admin username/password are printed by the
-wizard and saved in `.env` (`SAT_BOOTSTRAP_ADMIN_*`). Change the password on first
-login.
-
-Try it: register a second account in an incognito window → approve it from
-**Admin → Approvals** → log in as that user → **Launch notebook**.
-
----
-
-## The 4-desktop lab (multi-node)
-
-On the **master**:
-
+### Option B — the 4-desktop lab (multi-node)
+**On the master** (enable `--nfs` so user work follows them across nodes):
 ```bash
-./setup/master_init.sh --advertise-addr 192.168.1.10 --domain satyameba.local
+./setup/master_init.sh --advertise-addr 192.168.1.10 --domain satyameba.local \
+    --gpu --nfs --users 16
 ```
-
-It initialises the swarm, deploys the stack, and prints a copy-paste command for
-workers. On **each worker** (same VLAN):
-
+It inits the swarm, deploys the stack, and **prints a ready-to-paste worker
+command**. **On each of the other 3 nodes:**
 ```bash
 sudo ./setup/worker_join.sh \
     --master-ip 192.168.1.10 --join-token SWMTKN-1-xxxx \
     --node-secret <printed-secret> --gateway https://192.168.1.10 \
-    --gpu --master-ssh user@192.168.1.10
+    --gpu --nfs-server 192.168.1.10
 ```
+Each worker joins the swarm, builds the notebook image, mounts the NFS share,
+and **registers itself** — it appears under **Admin → Nodes** as online. Add more
+nodes by repeating the one command.
 
-The worker joins the swarm, builds the notebook image, registers itself (shows up
-under **Admin → Nodes**), and starts a heartbeat. Done. Add as many nodes as you
-like — repeat the one command. Details: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+**Firewall (VLAN-only):** open `2377/tcp`, `7946/tcp+udp`, `4789/udp` between
+nodes; expose only `80/443` to clients. Multi-node, HA, NFS, GPU, backups and TLS
+details: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ---
 
-## Using the wizard
+# 3 · Using it
 
-| Button | What it does |
-|--------|--------------|
-| **1 · Check dependencies** | Probes Docker, Compose v2, NVIDIA driver + Container Toolkit, openssl, curl, git… with a progress bar and per-item status. |
-| **2 · Install / fix missing** | Installs/repairs anything missing via the official Docker & NVIDIA apt repos. |
-| **3 · Verify GPU passthrough** | Runs `docker run --gpus all … nvidia-smi` to prove containers see the GPU. |
-| **Add me to docker group** | `usermod -aG docker $USER` so you can run docker without sudo. |
-| **Bootstrap node ▶** | Runs the master or worker bootstrap with the fields you filled in. |
+### As an admin
+1. Log in at `https://<host>/` with the seeded admin; **change the password** when
+   prompted, and optionally enable **2FA** (scan the QR in your workspace).
+2. **Approvals** — approve or reject new sign-ups (grant *user* or *admin*).
+3. **Users** — see everyone; **kick off** (suspend) a misbehaving user instantly,
+   or reinstate.
+4. **Nodes** — every machine, role, GPU, online status, heartbeat.
+5. **Sessions** — who has a notebook running right now.
+6. **Monitoring** — live CPU/GPU/network/storage per node (embedded Grafana +
+   inline Prometheus numbers).
+7. **Audit** — the tamper-evident log; verify its integrity in one click.
 
----
+### As a user
+1. **Register**, then wait for admin approval; log in once approved.
+2. **Pick a profile** (Small/Medium/Large/GPU) and click **Launch** — JupyterLab
+   opens in a new tab (SSO, no second login), placed on a free node.
+3. **Upload datasets** (no size cap) into `/work`; use shared data in `/shared`.
+4. Train/run on the lab's GPUs. Step away — your files persist; relaunch later and
+   your work is right where you left it.
+5. Optionally enable **2FA** and change your password from the workspace.
 
-## Admin dashboard
-
-- **Overview** — pending/approved/suspended counts, node count, audit-chain integrity.
-- **Approvals** — approve (as user or admin) or reject join requests.
-- **Users** — see everyone, their status & last login; **kick off** (suspend) or reinstate.
-- **Nodes** — every machine in the cluster, role, GPU, online status, last heartbeat.
-- **Sessions** — which users have a notebook running right now.
-- **Monitoring** — embedded Grafana: CPU / GPU / network / storage per node.
-- **Audit** — full, tamper-evident log of every privileged action.
-
----
-
-## Repository layout
-
-```
-SATYAMEBA/
-├── gateway/           FastAPI auth & orchestration API (ORM models, JWT, signing, audit)
-├── frontend/          Vanilla-JS SPA + the nginx edge (TLS, reverse proxy)
-├── jupyterhub/        Hub config, gateway-backed authenticator, hardened notebook image
-├── monitoring/        Prometheus (compose + swarm) + Grafana provisioning & dashboard
-├── setup/             tkinter wizard, master_init.sh, worker_join.sh
-├── scripts/           gen_secrets.sh, sign_release.sh, verify_release.sh
-├── docs/              ARCHITECTURE.md · SECURITY.md · DEPLOYMENT.md
-├── docker-compose.yml         single-host stack
-├── docker-compose.swarm.yml   multi-node Swarm stack
-├── OWNERSHIP.md · LICENSE · SHA256SUMS   ownership & integrity
-└── Makefile           make help
+### 🎬 Animated walkthroughs
+Step-by-step Manim videos for both audiences live in [`tutorial/`](tutorial/) —
+an **admin setup** guide and a **user journey**, with the same flow told as
+stories in [`tutorial/NARRATIVE.md`](tutorial/NARRATIVE.md).
+```bash
+pip install -r tutorial/requirements.txt && ./tutorial/render.sh
 ```
 
-## Handy commands
-
+### Handy commands
 ```bash
 make help          # list everything
-make scan USERS=16 # size .env to this host's storage/RAM/CPU for N users
+make scan USERS=16 # size .env to this host's storage/RAM/CPU
 make up            # build images (incl. notebook) + start single-host stack
 make logs          # tail logs
-make obfuscate     # build edge with obfuscated client JS
-make sign KEY="Samaraho Mukherjee <you@example.com>" TAG=v0.1.0   # sign release
+make backup        # dump DB + secrets to backups/
+make sign KEY="Samaraho Mukherjee <you@example.com>" TAG=v0.1.0
 make verify        # verify integrity + ownership signature
 ```
 
-## Security & ownership
+---
 
-- Threat model and OWASP Top-10 mapping: [`docs/SECURITY.md`](docs/SECURITY.md).
-- This project is owned by **Samaraho Mukherjee**. Verify provenance:
+## Reference
+
+```
+SATYAMEBA/
+├── gateway/      FastAPI auth & orchestration API (ORM, JWT, 2FA, signing, audit)
+├── frontend/     Vanilla-JS SPA + the nginx edge (TLS, reverse proxy, CSP)
+├── jupyterhub/   Hub config, gateway-backed authenticator + SSO, hardened notebook image
+├── monitoring/   Prometheus (compose + swarm) + Grafana provisioning & dashboard
+├── setup/        tkinter wizard, master_init.sh, worker_join.sh
+├── scripts/      secrets, resource scan, NFS, GPU runtime, gVisor, HA, backup, certs, signing
+├── tutorial/     Manim animated guides (admin + user) + SVG art
+├── docs/         ARCHITECTURE · SECURITY · DEPLOYMENT · CHARACTERISTICS · KNOWN_ISSUES
+├── docker-compose.yml / .swarm.yml / .external-db.yml
+└── OWNERSHIP.md · LICENSE · SHA256SUMS · Makefile
+```
+
+- **Capabilities, limits & every default:** [`docs/CHARACTERISTICS.md`](docs/CHARACTERISTICS.md)
+- **Self-audited status / flaw log:** [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md)
+- **Ownership** belongs to **Samaraho Mukherjee** — verify provenance:
   ```bash
   ./scripts/verify_release.sh && gpg --verify SHA256SUMS.asc SHA256SUMS
   ```
 
-## Characteristics, limits & status
-
-- **[`docs/CHARACTERISTICS.md`](docs/CHARACTERISTICS.md)** — capabilities,
-  resource profiles, storage behaviour, ports, scaling, HA limits, and every
-  default you need to know.
-- **[`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md)** — self-audited flaw log with
-  status (most now fixed: SSO, profiles, shared datasets, live Prometheus metrics,
-  Redis-shared limits, GPU swarm runtime, tests/CI…).
-
-Headline features now in: one-click **SSO** into JupyterLab, **resource profiles**
-(Small/Medium/Large/GPU), a **shared dataset volume**, **no upload cap**,
-**storage-aware sizing** (`make scan`), live cluster metrics pulled straight from
-Prometheus into the admin Overview, and a committed **test suite + CI**.
-
-Security extras now in: **TOTP 2FA** (optionally mandatory for admins), forced
-rotation of the seeded admin password, an optional **gVisor** sandbox runtime,
-and a strict **CSP** on the SPA.
-
-## Remaining hardening (needs your infra/hardware)
-
-- Replicated Postgres for full HA (you supply it; the wiring is in place).
-- OIDC/LDAP institutional login (needs your identity provider).
-- Hard per-user disk quotas (enable XFS prjquota).
-- Verify GPU passthrough and gVisor on real RTX 5070 hardware.
-
----
-
-<div align="center"><sub>SATYAMEBA · built for labs that want Colab on their own metal · © 2026 Samaraho Mukherjee</sub></div>
+<div align="center"><sub>SATYAMEBA · Colab on your own metal · © 2026 Samaraho Mukherjee</sub></div>
