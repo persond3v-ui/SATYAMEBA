@@ -29,9 +29,12 @@ plug-n-play.
 - **Your work follows you** — with NFS storage mode, files persist and reappear
   no matter which node you land on next. Logging out tears the notebook down;
   idle servers are auto-culled to free GPUs.
-- **Private, encrypted storage** — each user's data lives in a per-account folder
-  with a **meaningless hashed name** and strict `0700` perms, encrypted at rest;
-  a re-used username can never inherit a deleted account's files.
+- **Private per-account storage** — each user's data lives in a folder with a
+  **meaningless hashed name** (keyed to the immutable account id) and strict
+  `0700` perms, so a re-used username can never inherit a deleted account's
+  files. Encryption-at-rest is anchored by the owner keystore + crypto-erase
+  (`owner-setup/`); the per-user gocryptfs mount that turns it into on-disk
+  ciphertext is the remaining wiring (needs FUSE + on-hardware verification).
 
 ### 👑 Owner control & break-glass
 - **Un-removable Owner role** (the project owner) — no admin can demote, suspend,
