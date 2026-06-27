@@ -67,10 +67,35 @@ Each user's notebook runs in its own container with:
 > under gVisor (`runsc`) or Kata Containers — documented in DEPLOYMENT.md as an
 > optional hardening step.
 
+## Additional hardening
+
+- **TOTP two-factor auth.** Any user can enrol a TOTP authenticator
+  (`/api/auth/2fa/*`); once enabled, login requires the 6-digit code. The login
+  flow returns `otp_required` so the SPA can prompt. Set `SAT_REQUIRE_ADMIN_2FA`
+  to require it for admins.
+- **Forced password rotation.** The seeded bootstrap admin is flagged
+  `must_change_password`; the SPA shows a banner until it's changed, and changing
+  a password revokes all *other* sessions.
+- **Stronger sandbox runtime (gVisor).** `scripts/setup_gvisor.sh` installs
+  `runsc` and registers it with Docker; set `SAT_SANDBOX_RUNTIME=runsc` to run
+  every notebook under gVisor's syscall-intercepting sandbox — real defense
+  against container escape by a malicious approved user.
+- **Content-Security-Policy on the SPA.** The edge serves the app with a strict
+  CSP (`default-src 'self'`, `object-src 'none'`, `frame-ancestors 'self'`) plus
+  HSTS/nosniff/Referrer-Policy, shrinking the XSS blast radius.
+- **SSO token not logged.** The one-time-token handoff URL is served with
+  `access_log off` so the token never lands in the edge access log.
+
+> Still deferred (needs your identity provider): OIDC/LDAP institutional login.
+> The integration point is the gateway authenticator + a new
+> `/api/internal/authenticate`-style adapter; documented as a future option.
+
 ## Operational hardening checklist
 
 - [ ] Replace the self-signed cert with a CA/Let's Encrypt cert.
-- [ ] Change the bootstrap admin password on first login.
+- [ ] Change the bootstrap admin password on first login (the SPA prompts).
+- [ ] Enrol TOTP 2FA for admin accounts (set `SAT_REQUIRE_ADMIN_2FA=true`).
+- [ ] For less-trusted users, run notebooks under gVisor (`SAT_SANDBOX_RUNTIME=runsc`).
 - [ ] Restrict `:2377`, `:7946`, `:4789` (swarm) to the VLAN with a host firewall.
 - [ ] Put the database on an encrypted volume.
 - [ ] Rotate `SAT_INTERNAL_SHARED_SECRET` and the JWT keypair periodically.

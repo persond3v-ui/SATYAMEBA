@@ -3,6 +3,21 @@
 Self-audited list of flaws found in the Phase-1 core and their current status.
 Severity: 🔴 high · 🟠 medium · 🟡 low. Status: ✅ fixed · 🟢 mitigated · 📌 documented.
 
+## Resolved — security-hardening round
+
+- **S-1 ✅ TOTP two-factor auth** — enrol/enable/disable endpoints + QR, login
+  enforces the code when enabled (`SAT_REQUIRE_ADMIN_2FA` to mandate for admins).
+- **S-2 ✅ Forced password rotation** — bootstrap admin flagged
+  `must_change_password`; SPA banner + change-password clears it and revokes
+  other sessions.
+- **S-3 ✅ gVisor sandbox runtime option** — `scripts/setup_gvisor.sh` +
+  `SAT_SANDBOX_RUNTIME=runsc` runs notebooks under gVisor (container-escape
+  defense). Verify on hardware; GPU + gVisor has limitations.
+- **S-4 ✅ CSP + header hardening on the SPA**, and the SSO one-time-token URL is
+  no longer written to the access log.
+- **S-5 📌 OIDC/LDAP** — still deferred; needs your IdP. Integration point noted
+  in SECURITY.md.
+
 ## Resolved — production-readiness round
 
 - **N-1 🔴 ✅ Per-user work was node-local in Swarm (data loss across nodes).**

@@ -109,6 +109,7 @@ def _ensure_bootstrap_admin() -> None:
             password_hash=hash_password(password),
             role=UserRole.admin,
             status=UserStatus.approved,
+            must_change_password=True,  # force rotation of the seeded password
         )
         db.add(admin_user)
         db.commit()

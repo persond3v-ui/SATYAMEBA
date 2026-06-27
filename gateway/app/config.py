@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 120
     auth_rate_limit_per_minute: int = 10
     bot_filter_enabled: bool = True
+    require_admin_2fa: bool = False  # if true, admins must enrol TOTP before privileged use
 
     @field_validator("cors_origins", "request_signing_protect_methods", mode="before")
     @classmethod

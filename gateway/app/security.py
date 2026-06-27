@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
+import pyotp
 
 from .config import get_settings
 
@@ -133,3 +134,24 @@ def internal_token(username: str) -> str:
 
 def verify_internal_token(username: str, token: str) -> bool:
     return hmac.compare_digest(internal_token(username), token or "")
+
+
+# --------------------------------------------------------------------------- #
+# TOTP two-factor authentication
+# --------------------------------------------------------------------------- #
+def new_totp_secret() -> str:
+    return pyotp.random_base32()
+
+
+def totp_uri(secret: str, username: str) -> str:
+    return pyotp.totp.TOTP(secret).provisioning_uri(name=username, issuer_name="SATYAMEBA")
+
+
+def verify_totp(secret: str, code: str) -> bool:
+    if not secret or not code:
+        return False
+    try:
+        # valid_window=1 tolerates ~30s clock skew either side.
+        return pyotp.TOTP(secret).verify(code.strip().replace(" ", ""), valid_window=1)
+    except Exception:
+        return False

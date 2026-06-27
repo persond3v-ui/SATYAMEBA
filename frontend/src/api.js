@@ -112,6 +112,9 @@ export const api = {
   me: () => request("GET", "/api/auth/me"),
   changePassword: (old_password, new_password) =>
     request("POST", "/api/auth/change-password", { old_password, new_password }),
+  twofaSetup: () => request("POST", "/api/auth/2fa/setup"),
+  twofaEnable: (code) => request("POST", "/api/auth/2fa/enable", { code }),
+  twofaDisable: (code) => request("POST", "/api/auth/2fa/disable", { code }),
 
   launch: (profile = "medium") => request("POST", "/api/notebooks/launch", { profile }),
   stopNotebook: () => request("POST", "/api/notebooks/stop"),

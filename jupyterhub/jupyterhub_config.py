@@ -33,6 +33,8 @@ USER_HOST_BASE = os.environ.get("SAT_USER_HOST_BASE", "/srv/satyameba/users")
 SHARED_HOST_PATH = os.environ.get("SAT_SHARED_HOST_PATH", "/srv/satyameba/shared")
 NB_UID = int(os.environ.get("SAT_NB_UID", "1000"))
 NB_GID = int(os.environ.get("SAT_NB_GID", "100"))
+# Optional stronger sandbox runtime (e.g. "runsc" for gVisor). Empty = default.
+SANDBOX_RUNTIME = os.environ.get("SAT_SANDBOX_RUNTIME", "").strip()
 
 # Resource profiles (payload-aware scheduling).
 PROFILES = {
@@ -154,10 +156,13 @@ else:
     c.DockerSpawner.use_internal_ip = True
     c.DockerSpawner.volumes = _volumes
     # Baseline isolation hardening (profile hook layers resources on top).
-    c.DockerSpawner.extra_host_config = {
+    _base_hc = {
         "cap_drop": ["ALL"],
         "security_opt": ["no-new-privileges:true"],
     }
+    if SANDBOX_RUNTIME:
+        _base_hc["runtime"] = SANDBOX_RUNTIME   # e.g. gVisor's runsc
+    c.DockerSpawner.extra_host_config = _base_hc
 
 # --- Cull idle servers to free resources ------------------------------------
 c.JupyterHub.services.append(

@@ -126,6 +126,52 @@ def test_change_password_and_session_revocation(client):
                        json={"username": "bob", "password": "N3w#Pass!234"}).status_code == 200
 
 
+def test_two_factor_login(client):
+    import pyotp
+
+    # new isolated user, approved by admin
+    client.post("/api/auth/register", json={
+        "email": "carol@lab.io", "username": "carol", "full_name": "Carol",
+        "password": "Str0ng#Pass99"})
+    tok = _admin(client)
+    at, sk = tok["access_token"], tok["signing_key"]
+    cid = next(u["id"] for u in client.get(
+        "/api/admin/users", headers={"Authorization": f"Bearer {at}", "Accept": "application/json"}
+    ).json() if u["username"] == "carol")
+    body = json.dumps({"user_id": cid, "role": "user"}).encode()
+    client.post("/api/admin/users/approve",
+                headers=_sign(at, sk, "POST", "/api/admin/users/approve", body), content=body)
+
+    # carol logs in, enrols 2FA
+    c = client.post("/api/auth/login", json={"username": "carol", "password": "Str0ng#Pass99"}).json()
+    cat, csk = c["access_token"], c["signing_key"]
+    r = client.post("/api/auth/2fa/setup",
+                    headers=_sign(cat, csk, "POST", "/api/auth/2fa/setup", b""), content=b"")
+    assert r.status_code == 200
+    secret = r.json()["secret"]
+    assert r.json()["qr_png_data_uri"].startswith("data:image/png;base64,")
+
+    code = pyotp.TOTP(secret).now()
+    eb = json.dumps({"code": code}).encode()
+    assert client.post("/api/auth/2fa/enable",
+                       headers=_sign(cat, csk, "POST", "/api/auth/2fa/enable", eb),
+                       content=eb).status_code == 204
+
+    # login now requires the OTP
+    r = client.post("/api/auth/login", json={"username": "carol", "password": "Str0ng#Pass99"})
+    assert r.status_code == 401 and r.json()["detail"] == "otp_required"
+    r = client.post("/api/auth/login", json={
+        "username": "carol", "password": "Str0ng#Pass99", "otp": pyotp.TOTP(secret).now()})
+    assert r.status_code == 200
+
+
+def test_bootstrap_admin_must_change_password(client):
+    tok = _admin(client)
+    me = client.get("/api/auth/me",
+                    headers={"Authorization": f"Bearer {tok['access_token']}", "Accept": "application/json"})
+    assert me.json()["must_change_password"] is True
+
+
 def test_metrics_endpoint(client):
     client.get("/healthz")
     body = client.get("/metrics").text

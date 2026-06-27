@@ -182,12 +182,16 @@ Headline features now in: one-click **SSO** into JupyterLab, **resource profiles
 **storage-aware sizing** (`make scan`), live cluster metrics pulled straight from
 Prometheus into the admin Overview, and a committed **test suite + CI**.
 
+Security extras now in: **TOTP 2FA** (optionally mandatory for admins), forced
+rotation of the seeded admin password, an optional **gVisor** sandbox runtime,
+and a strict **CSP** on the SPA.
+
 ## Remaining hardening (needs your infra/hardware)
 
-- Replicated Postgres for full HA (single-manager master is still a SPOF).
-- gVisor/Kata sandbox runtime for container-escape defense.
+- Replicated Postgres for full HA (you supply it; the wiring is in place).
+- OIDC/LDAP institutional login (needs your identity provider).
 - Hard per-user disk quotas (enable XFS prjquota).
-- Verify GPU passthrough into a spawned notebook on real RTX 5070 hardware.
+- Verify GPU passthrough and gVisor on real RTX 5070 hardware.
 
 ---
 

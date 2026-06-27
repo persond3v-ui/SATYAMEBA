@@ -45,6 +45,10 @@ function loginView() {
       <input id="u" autocomplete="username" />
       <label>Password</label>
       <input id="p" type="password" autocomplete="current-password" />
+      <div id="otpRow" class="hidden">
+        <label>Authenticator code</label>
+        <input id="otp" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" />
+      </div>
       <div class="btn-row"><button id="go">Sign in</button>
         <button class="secondary" data-go="#/register">Create account</button></div>
       <div class="err" id="err"></div>
@@ -55,16 +59,25 @@ function loginView() {
 }
 async function doLogin() {
   const err = view.querySelector("#err"); err.textContent = "";
+  const otpEl = view.querySelector("#otp");
   try {
-    const t = await api.login({
+    const body = {
       username: view.querySelector("#u").value.trim(),
       password: view.querySelector("#p").value,
-    });
+    };
+    if (otpEl && otpEl.value.trim()) body.otp = otpEl.value.trim();
+    const t = await api.login(body);
     api.saveTokens(t);
     me = await api.me();
     renderNav();
     go(me.role === "admin" ? "#/admin" : "#/app");
-  } catch (e) { err.textContent = e.message; }
+  } catch (e) {
+    if (e.message === "otp_required") {
+      view.querySelector("#otpRow").classList.remove("hidden");
+      otpEl.focus();
+      err.textContent = "Enter the 6-digit code from your authenticator app.";
+    } else { err.textContent = e.message; }
+  }
 }
 
 function registerView() {
@@ -122,12 +135,21 @@ async function workspaceView() {
       <p class="hint" id="state"></p>
     </div>
 
+    ${me.must_change_password ? `<div class="card" style="border-color:var(--warn)">
+      ⚠️ <strong>Please change your password.</strong> This account is still using its
+      initial password — set a new one below.</div>` : ""}
+
     <div class="card" style="max-width:420px">
       <h2>Change password</h2>
       <label>Current password</label><input id="op" type="password" autocomplete="current-password" />
       <label>New password</label><input id="np" type="password" autocomplete="new-password" />
       <p class="hint">Min 10 chars, mixing 3 of: lower, upper, digit, symbol.</p>
       <div class="btn-row"><button class="secondary" id="chpw">Update password</button></div>
+    </div>
+
+    <div class="card" style="max-width:420px" id="twofa">
+      <h2>Two-factor authentication ${me.totp_enabled ? badge("approved") : ""}</h2>
+      <div id="twofaBody"></div>
     </div>`;
   const state = view.querySelector("#state");
   refreshNbStatus(state);
@@ -148,7 +170,48 @@ async function workspaceView() {
     try {
       await api.changePassword(view.querySelector("#op").value, view.querySelector("#np").value);
       toast("Password updated", "ok");
-      view.querySelector("#op").value = ""; view.querySelector("#np").value = "";
+      me = await api.me();
+      workspaceView();
+    } catch (e) { toast(e.message, "bad"); }
+  };
+  render2FA();
+}
+
+function render2FA() {
+  const body = view.querySelector("#twofaBody");
+  if (!body) return;
+  if (me.totp_enabled) {
+    body.innerHTML = `<p class="muted">2FA is on. Disabling requires a current code.</p>
+      <label>Authenticator code</label><input id="dcode" inputmode="numeric" placeholder="6-digit code" />
+      <div class="btn-row"><button class="danger" id="disable2fa">Disable 2FA</button></div>`;
+    body.querySelector("#disable2fa").onclick = async () => {
+      try {
+        await api.twofaDisable(body.querySelector("#dcode").value.trim());
+        toast("2FA disabled", "ok"); me = await api.me(); workspaceView();
+      } catch (e) { toast(e.message, "bad"); }
+    };
+    return;
+  }
+  body.innerHTML = `<p class="muted">Protect your account with a TOTP app
+      (Google Authenticator, Aegis, 1Password…).</p>
+    <div class="btn-row"><button class="secondary" id="setup2fa">Set up 2FA</button></div>
+    <div id="enroll" class="hidden"></div>`;
+  body.querySelector("#setup2fa").onclick = async () => {
+    try {
+      const s = await api.twofaSetup();
+      const enroll = body.querySelector("#enroll");
+      enroll.classList.remove("hidden");
+      enroll.innerHTML = `<p class="muted">Scan this, then enter a code to confirm:</p>
+        <img alt="2FA QR" src="${esc(s.qr_png_data_uri)}" style="background:#fff;padding:8px;border-radius:8px" />
+        <p class="hint">Manual key: <code>${esc(s.secret)}</code></p>
+        <label>Code from app</label><input id="ecode" inputmode="numeric" placeholder="6-digit code" />
+        <div class="btn-row"><button class="ok" id="enable2fa">Confirm & enable</button></div>`;
+      enroll.querySelector("#enable2fa").onclick = async () => {
+        try {
+          await api.twofaEnable(enroll.querySelector("#ecode").value.trim());
+          toast("2FA enabled", "ok"); me = await api.me(); workspaceView();
+        } catch (e) { toast(e.message, "bad"); }
+      };
     } catch (e) { toast(e.message, "bad"); }
   };
 }

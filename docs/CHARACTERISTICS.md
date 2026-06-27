@@ -78,9 +78,12 @@ These are **reservations**: Swarm places work by the requested footprint. The
   limiting (Redis-shared), best-effort bot filtering.
 - Client JS can be obfuscated (`make obfuscate`) — **cosmetic only**, never a
   security boundary.
+- **TOTP 2FA** (per-user, optionally mandatory for admins) and forced rotation of
+  the seeded admin password.
 - Notebook isolation: `cap_drop=ALL`, `no-new-privileges`, CPU/RAM caps, private
-  volume, no host bind mounts, idle-culled. *Not* hardened against kernel
-  container-escape — add gVisor/Kata for hostile multi-tenancy.
+  volume, no host bind mounts, idle-culled. Optional **gVisor** runtime
+  (`SAT_SANDBOX_RUNTIME=runsc`) for container-escape defense.
+- Strict **CSP** + security headers on the SPA at the edge.
 
 ## Scaling & load balancing
 

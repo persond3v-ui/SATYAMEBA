@@ -34,6 +34,17 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str = Field(max_length=64)
     password: str = Field(max_length=128)
+    otp: str | None = Field(default=None, max_length=16)  # TOTP code when 2FA on
+
+
+class TwoFASetupResponse(BaseModel):
+    secret: str
+    otpauth_uri: str
+    qr_png_data_uri: str
+
+
+class TwoFACodeRequest(BaseModel):
+    code: str = Field(max_length=16)
 
 
 class TokenResponse(BaseModel):
@@ -81,6 +92,8 @@ class UserOut(BaseModel):
     created_at: datetime
     approved_at: datetime | None = None
     last_login_at: datetime | None = None
+    totp_enabled: bool = False
+    must_change_password: bool = False
 
 
 class ApproveRequest(BaseModel):

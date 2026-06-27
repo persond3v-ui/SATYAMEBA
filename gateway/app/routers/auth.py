@@ -18,6 +18,8 @@ from ..schemas import (
     RefreshRequest,
     RegisterRequest,
     TokenResponse,
+    TwoFACodeRequest,
+    TwoFASetupResponse,
     UserOut,
 )
 from ..security import (
@@ -26,7 +28,10 @@ from ..security import (
     hash_password,
     new_jti,
     new_signing_key,
+    new_totp_secret,
+    totp_uri,
     verify_password,
+    verify_totp,
 )
 from ..timeutil import aware
 
@@ -143,6 +148,16 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     if user.status in (UserStatus.rejected, UserStatus.suspended):
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"Account {user.status.value}")
 
+    # Second factor (TOTP) when enabled for this account.
+    if user.totp_enabled:
+        if not payload.otp:
+            # Distinct code so the SPA can prompt for the 6-digit token.
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "otp_required")
+        if not verify_totp(user.totp_secret or "", payload.otp):
+            user.failed_logins += 1
+            db.commit()
+            raise generic
+
     tokens = _issue_session(db, user, request)
     audit.record(db, action="user.login", actor_id=user.id, actor_label=user.username,
                  ip=_client_ip(request), user_agent=request.headers.get("user-agent", ""))
@@ -195,6 +210,7 @@ def change_password(
     if not verify_password(payload.old_password, user.password_hash):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is incorrect")
     user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = False
     # Invalidate every other session; keep the one making the change.
     for s in db.execute(
         select(UserSession).where(UserSession.user_id == user.id, UserSession.id != current.id)
@@ -202,6 +218,56 @@ def change_password(
         s.revoked = True
     db.commit()
     audit.record(db, action="user.change_password", actor_id=user.id,
+                 actor_label=user.username, ip=_client_ip(request))
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Two-factor (TOTP) enrolment
+# --------------------------------------------------------------------------- #
+@router.post("/2fa/setup", response_model=TwoFASetupResponse)
+def twofa_setup(pair=Depends(get_current_session), db: Session = Depends(get_db)):
+    """Generate a TOTP secret + QR. 2FA is not active until /2fa/enable confirms a code."""
+    import base64
+    import io
+
+    import segno
+
+    user, _ = pair
+    secret = new_totp_secret()
+    user.totp_secret = secret
+    user.totp_enabled = False  # stays off until a code is verified
+    db.commit()
+    uri = totp_uri(secret, user.username)
+    buff = io.BytesIO()
+    segno.make(uri).save(buff, kind="png", scale=4)
+    data_uri = "data:image/png;base64," + base64.b64encode(buff.getvalue()).decode()
+    return TwoFASetupResponse(secret=secret, otpauth_uri=uri, qr_png_data_uri=data_uri)
+
+
+@router.post("/2fa/enable", status_code=204)
+def twofa_enable(payload: TwoFACodeRequest, request: Request,
+                 pair=Depends(get_current_session), db: Session = Depends(get_db)):
+    user, _ = pair
+    if not user.totp_secret or not verify_totp(user.totp_secret, payload.code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid code — try again")
+    user.totp_enabled = True
+    db.commit()
+    audit.record(db, action="user.2fa_enable", actor_id=user.id,
+                 actor_label=user.username, ip=_client_ip(request))
+    return None
+
+
+@router.post("/2fa/disable", status_code=204)
+def twofa_disable(payload: TwoFACodeRequest, request: Request,
+                  pair=Depends(get_current_session), db: Session = Depends(get_db)):
+    user, _ = pair
+    if not user.totp_enabled or not verify_totp(user.totp_secret or "", payload.code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid code")
+    user.totp_enabled = False
+    user.totp_secret = None
+    db.commit()
+    audit.record(db, action="user.2fa_disable", actor_id=user.id,
                  actor_label=user.username, ip=_client_ip(request))
     return None
 
