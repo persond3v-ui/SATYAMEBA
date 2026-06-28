@@ -63,7 +63,7 @@ docker build -q -t satyameba/gateway:latest ./gateway
 docker build -q -t satyameba/jupyterhub:latest ./jupyterhub
 docker build -q -t satyameba/edge:latest ./frontend
 NB_GPU_ARG=$([[ $GPU -eq 1 ]] && echo "--build-arg SAT_GPU_BUILD=true" || echo "")
-docker build -q $NB_GPU_ARG -t satyameba/notebook:latest ./jupyterhub/singleuser
+docker build -q $NB_GPU_ARG --build-arg SAT_TORCH_INDEX="${SAT_TORCH_INDEX:-cu121}" -t satyameba/notebook:latest ./jupyterhub/singleuser
 
 INTERNAL_SECRET="$(grep '^SAT_INTERNAL_SHARED_SECRET=' .env | cut -d= -f2-)"
 

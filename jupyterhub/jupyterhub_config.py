@@ -97,8 +97,9 @@ def pre_spawn_hook(spawner):
 
     The gateway already decided *which node* and *whether to share* (see
     ``scheduler.py``); we just translate that into Swarm/Docker primitives:
-      * exclusive / boost → reserve ALL GPU slices (nobody else co-locates).
-      * shared            → reserve ONE slice (concurrent co-tenancy on one GPU).
+      * exclusive / boost → RESERVE the node's GPU (no one else co-locates).
+      * shared            → no reservation + NVIDIA_VISIBLE_DEVICES=all
+                            (concurrent co-tenancy on one physical GPU).
       * node pin          → constrain placement to the chosen hostname.
     """
     opts = spawner.user_options or {}

@@ -62,7 +62,7 @@ fi
 # 2. Build the notebook sandbox image locally.
 say "Building notebook sandbox image…"
 NB_GPU_ARG=$([[ $GPU -eq 1 ]] && echo "--build-arg SAT_GPU_BUILD=true" || echo "")
-docker build -q $NB_GPU_ARG -t satyameba/notebook:latest ./jupyterhub/singleuser
+docker build -q $NB_GPU_ARG --build-arg SAT_TORCH_INDEX="${SAT_TORCH_INDEX:-cu121}" -t satyameba/notebook:latest ./jupyterhub/singleuser
 
 # 3. Register with the gateway. The node token is HMAC(node_secret, hostname).
 NODE_TOKEN="$(printf '%s' "$HOSTNAME_S" | openssl dgst -sha256 -hmac "$NODE_SECRET" | awk '{print $2}')"

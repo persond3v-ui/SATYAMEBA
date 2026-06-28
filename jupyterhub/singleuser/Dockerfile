@@ -9,12 +9,16 @@ USER root
 # Common ML/data libraries pre-baked so notebooks start fast. GPU wheels are
 # pulled at build time only when SAT_GPU_BUILD=true (see build arg).
 ARG SAT_GPU_BUILD=false
+# Cross-checked CUDA wheel tag (cu118/cu121/cu124/cu126) so the SAME image runs on
+# every node — including older GPUs that aren't an RTX 5070. The cluster wizard
+# computes this from the OLDEST driver across the cluster.
+ARG SAT_TORCH_INDEX=cu121
 RUN pip install --no-cache-dir \
         pandas numpy scipy matplotlib seaborn scikit-learn \
         ipywidgets jupyterlab plotly \
         jupyter-resource-usage jupyterlab-nvdashboard && \
     if [ "$SAT_GPU_BUILD" = "true" ]; then \
-        pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121 ; \
+        pip install --no-cache-dir torch --index-url "https://download.pytorch.org/whl/${SAT_TORCH_INDEX}" ; \
     fi
 
 # --- SATYAMEBA notebook experience -----------------------------------------

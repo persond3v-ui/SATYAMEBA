@@ -50,7 +50,25 @@ Open `https://localhost/`. The admin credentials are in the generated `.env`.
 
 ## 2. The 4-desktop lab (Swarm)
 
-### On the master
+### One command for the whole cluster (recommended)
+
+From the master, the one-time wizard sets up **every** PC end to end:
+
+```bash
+sudo ./setup/cluster_setup.sh
+```
+
+It runs as the **super user** (re-execs via `sudo`; escalates to a real root
+shell where Debian's `sudo` misbehaves), asks **once** for your root/SSH password
+(passed via `sshpass -e`, never shown in `ps`) and uses it to act as root on
+every node, installs **Docker + the NVIDIA toolkit** where missing, **scans each
+GPU and cross-checks one CUDA/torch wheel** so a node that isn't an RTX 5070
+still integrates, sets up the **un-removable owner + break-glass** on all PCs,
+joins the Swarm, turns on **NFS + at-rest encryption** if you choose, and hosts
+the site on **ports 80 & 443 only**. Every step is verified and logged; it's
+idempotent, so a re-run is safe. (Prefer the manual steps below for fine control.)
+
+### On the master (manual)
 
 ```bash
 ./setup/master_init.sh --advertise-addr 192.168.1.10 --domain satyameba.local

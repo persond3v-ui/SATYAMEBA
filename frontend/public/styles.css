@@ -32,6 +32,21 @@ body {
   color: var(--text);
   min-height: 100vh; display: flex; flex-direction: column;
 }
+/* Slow aurora drift behind everything — finished-product depth, GPU-cheap. */
+body::before {
+  content: ""; position: fixed; inset: -20%; z-index: -2; pointer-events: none; opacity: .14;
+  background:
+    radial-gradient(40vw 40vw at 15% 20%, var(--accent), transparent 60%),
+    radial-gradient(38vw 38vw at 85% 75%, var(--accent-2), transparent 60%),
+    radial-gradient(30vw 30vw at 60% 10%, var(--magenta), transparent 60%);
+  filter: blur(20px); animation: sat-aurora 24s ease-in-out infinite alternate;
+}
+@keyframes sat-aurora { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(2%,-2%,0) scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
+@media (max-width: 640px) {
+  .nav { flex-wrap: wrap; gap: 4px; } .nav a { margin-left: 10px; }
+  .view { padding: 18px 12px; } table { font-size: .8rem; }
+}
 
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -68,7 +83,15 @@ body {
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask-composite: exclude;
 }
+.card { transition: transform .15s ease, box-shadow .2s ease; }
+.card:hover { transform: translateY(-2px); box-shadow: 0 14px 40px -18px #000; }
 .card:hover::before { opacity: .9; }
+/* loading shimmer for tables/panels */
+.shimmer { position: relative; overflow: hidden; min-height: 40px; border-radius: 8px; background: var(--panel-2); }
+.shimmer::after { content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.06), transparent);
+  transform: translateX(-100%); animation: sat-shim 1.2s infinite; }
+@keyframes sat-shim { to { transform: translateX(100%); } }
 .auth-card { max-width: 420px; margin: 8vh auto; }
 .auth-card::before { opacity: .8; }
 h1 { font-size: 1.6rem; margin-top: 0; }

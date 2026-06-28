@@ -92,11 +92,16 @@ plug-n-play.
 - **In-app notifications** — sharing started, boost approved/denied, node freed.
 
 ### 🖥️ Headless & one-button setup
-- **All-in-one installer** (`setup/install_wizard.sh`) — a real setup-program feel:
-  input fields, then a **live progress bar** running the whole pipeline in order
-  (deps → driver/toolkit → backend → boot services → desktop-slim/TUI → verify →
-  owner break-glass). Over SSH or console, **any resolution**, on **any distro**
-  (apt/dnf/yum/pacman/zypper/apk). `--unattended` / `--dry-run` supported.
+- **One-command whole-cluster wizard** (`setup/cluster_setup.sh`) — from the
+  master it sets up **every PC** over SSH **as root** (asks once for your
+  password), installs Docker + the NVIDIA toolkit where missing, **cross-checks a
+  single CUDA/torch wheel** so non-RTX-5070 nodes integrate, sets up the
+  un-removable owner on all nodes, joins the Swarm, and serves the site on
+  **ports 80 & 443 only**. Idempotent, fully logged, fails safe.
+- **All-in-one single-node installer** (`setup/install_wizard.sh`) — a real
+  setup-program feel: input fields + a **live progress bar** (deps → driver/
+  toolkit → backend → services → desktop-slim/TUI → verify → owner break-glass).
+  Over SSH or console, **any resolution**, on **any distro**. `--unattended` / `--dry-run`.
 - **Uninstall the desktop to save RAM** (reversible) and run a **neon curses
   dashboard** on the monitors showing per-node health + active users.
 - **Boot services** — the whole stack starts on power-on via systemd; failproof.

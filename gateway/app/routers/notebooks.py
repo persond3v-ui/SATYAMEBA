@@ -96,9 +96,11 @@ async def launch(request: Request, user: User = Depends(get_current_user), db=De
 
     # Close out any previous run of this user before re-placing them.
     old = _active_run(db, user)
+    freed_old = None
     if old:
         old.status = "stopped"
         old.stopped_at = utcnow()
+        freed_old = old.node_hostname
 
     plan = scheduler.plan_placement(db, user.username, profile, boost=boost)
     sid = _sid(user)
@@ -151,6 +153,11 @@ async def launch(request: Request, user: User = Depends(get_current_user), db=De
                          "Use `satyameba-ddp your_script.py` to launch distributed training.")
 
     db.commit()
+
+    # If re-launching freed a different node, promote the longest-waiting sharer.
+    if freed_old and freed_old != (plan.node or ""):
+        scheduler.on_run_stopped(db, freed_old)
+        db.commit()
 
     token = secrets.token_urlsafe(32)
     db.add(SsoToken(

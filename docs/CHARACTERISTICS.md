@@ -33,6 +33,12 @@ in Docker (backend, frontend, db, hub, monitoring, and the notebooks themselves)
 - **In-app notifications** (sharing started, boost approved/denied, node freed).
 - **Maintainability**: add nodes any time; **remote/off-VLAN nodes** join over a
   Tailscale tailnet (a separate wizard); admin **drain/maintenance mode** per node.
+- **One-command cluster setup** (`setup/cluster_setup.sh`): from the master, sets
+  up every PC over SSH **as root** (asks once for the password, `sshpass -e`),
+  installs Docker + NVIDIA toolkit where missing, **cross-checks a single
+  CUDA/torch wheel from the oldest driver** so mixed-GPU nodes (not just RTX 5070)
+  integrate, sets up the owner on all nodes, joins the Swarm, and serves **80/443
+  only**. Idempotent + fully logged.
 - **Headless option**: uninstall the desktop to save RAM (reversible) and run a
   **curses console dashboard** (any resolution) on the monitors; everything as
   **systemd boot services**; a **one-button TUI setup wizard** (`setup/wizard.sh`)
