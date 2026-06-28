@@ -12,12 +12,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import audit
+from .. import audit, scheduler
 from ..config import get_settings
 from ..database import get_db
 from ..models import Node, NodeStatus
 from ..schemas import NodeOut, NodeRegister
 from ..security import verify_internal_token
+from ..timeutil import aware, utcnow
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 settings = get_settings()
@@ -85,3 +86,41 @@ def heartbeat(
         node.labels = payload.labels
     db.commit()
     return {"ok": True}
+
+
+@router.get("/dashboard")
+def dashboard(
+    x_sat_node_name: str = Header(default=""),
+    x_sat_node_token: str = Header(default=""),
+    db: Session = Depends(get_db),
+):
+    """Read-only cluster health for the on-console curses TUI (a node calls this
+    with its own token). Returns per-node health + the users active on each."""
+    _check_internal(x_sat_node_name, x_sat_node_token)
+    cutoff = settings.node_offline_seconds
+    runs = scheduler.active_runs(db)
+    by_host: dict[str, list[str]] = {}
+    for r in runs:
+        by_host.setdefault(r.node_hostname, []).append(r.username)
+    out = []
+    for n in db.execute(select(Node).order_by(Node.role.desc(), Node.hostname)).scalars():
+        hb = aware(n.last_heartbeat)
+        age = (utcnow() - hb).total_seconds() if hb else None
+        if n.status == NodeStatus.draining:
+            state = "draining"
+        elif age is None or age > cutoff:
+            state = "offline"
+        else:
+            state = "online"
+        out.append({
+            "hostname": n.hostname, "role": n.role, "state": state,
+            "gpu": bool((n.labels or {}).get("gpu")),
+            "heartbeat_age": int(age) if age is not None else None,
+            "users": sorted(by_host.get(n.hostname, [])),
+        })
+    return {
+        "nodes": out,
+        "active_users": len({r.username for r in runs}),
+        "total_nodes": len(out),
+        "online_nodes": sum(1 for n in out if n["state"] == "online"),
+    }

@@ -73,6 +73,14 @@ curl -fsS -k -X POST "${GATEWAY}/api/nodes/register" \
   -d "{\"hostname\":\"${HOSTNAME_S}\",\"ip\":\"${IP_S}\",\"role\":\"worker\",\"labels\":{${GPU_LABEL}}}" \
   >/dev/null && say "Registered ✔" || say "Registration call failed (node still joined swarm)."
 
+# Record connection details for the on-console TUI dashboard.
+mkdir -p /etc/satyameba
+cat >/etc/satyameba/node.env <<EOF
+SAT_GATEWAY_URL=${GATEWAY}
+SAT_NODE_HOSTNAME=${HOSTNAME_S}
+SAT_NODE_TOKEN=${NODE_TOKEN}
+EOF
+
 # Heartbeat timer (systemd) so the admin dashboard sees this node as online.
 if command -v systemctl >/dev/null 2>&1; then
   cat >/etc/systemd/system/satyameba-heartbeat.service <<EOF

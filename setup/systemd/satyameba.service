@@ -1,0 +1,19 @@
+[Unit]
+Description=SATYAMEBA notebook platform (auto-start)
+Documentation=https://code.claude.com/docs
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=__ROOT__
+EnvironmentFile=-__ROOT__/.env
+# __START__ / __STOP__ are filled in by install_services.sh for compose vs swarm.
+ExecStart=__START__
+ExecStop=__STOP__
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+[Unit]
+Description=SATYAMEBA console dashboard on tty1
+After=satyameba.service network-online.target
+Wants=network-online.target
+Conflicts=getty@tty1.service
+
+[Service]
+# Neon curses dashboard shown on the physical monitor when the desktop has been
+# removed to save RAM. Restarts forever so the wall display is always up.
+ExecStart=/usr/bin/python3 __ROOT__/tui/satyameba_tui.py
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
