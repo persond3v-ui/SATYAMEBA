@@ -31,6 +31,17 @@ The Gateway decomposed into its processes (middleware chain, auth, admin,
 notebooks, nodes, internal, maintenance) and the Postgres tables they touch, plus
 the Edge and Hub sub-processes.
 
+## GPU scheduling, boost & maintainability
+![GPU scheduling](scheduler_flow.png)
+
+The dynamic load balancer: while the cluster is quiet (**A ≤ N**, N = online GPU
+nodes) every active user gets a **whole node**; once it fills (**A > N**) the
+newcomer **shares a node's GPU concurrently** (co-tenants are notified and the
+newcomer is queued for promotion). An **admin-approved boost** spreads one
+session across every free GPU node (the whole cluster at 3 a.m.). Also shown:
+the in-Lab traffic strip (scoped-token feed), a remote node joining over the
+Tailscale tailnet, and the on-console curses TUI reading `/api/nodes/dashboard`.
+
 ## Owner break-glass & tamper control plane
 ![Owner control plane](owner_control.png)
 

@@ -3,6 +3,36 @@
 Self-audited list of flaws found in the Phase-1 core and their current status.
 Severity: 🔴 high · 🟠 medium · 🟡 low. Status: ✅ fixed · 🟢 mitigated · 📌 documented.
 
+## GPU scheduling / boost / UX round (latest)
+
+New capability work, with honest residual limits:
+
+- **✅ Dynamic scheduler** — `scheduler.py`: A≤N exclusive whole node, A>N
+  concurrent GPU sharing (notify + queue), admin-approved one-session boost
+  across free nodes. Authoritative placement in `notebook_runs`; tested.
+- **✅ In-app notifications, boost approvals, node drain, audit CSV** — endpoints
+  + SPA UI; tested.
+- **✅ Neon JupyterLab + traffic widget** — custom CSS (verifiable) +
+  jupyter-resource-usage/nvdashboard for live RAM/VRAM/GPU/CPU + a pure-Python
+  server extension injecting the SATYAMEBA strip (**best-effort** HTML transform;
+  if a Lab version changes the page it silently no-ops — the theme + metric
+  widgets still work, so the notebook is never broken).
+- **🟢 GPU sharing on Swarm** — exclusive *reserves* the GPU; shared co-locates
+  via node-pin + `NVIDIA_VISIBLE_DEVICES=all` with `default-runtime=nvidia`.
+  Single-host sharing is native; **the multi-node path needs validation on real
+  hardware** (driver/toolkit dependent). No MIG (consumer RTX 5070).
+- **🟢 Cross-node multi-GPU (boost)** — `satyameba-ddp` wraps `torchrun` with the
+  injected rendezvous; single-node multi-GPU works directly, **true cross-node
+  DDP requires DDP-aware code + the rank agents reachable over the network**
+  (scaffolded; validate on hardware).
+- **📌 Setup scripts on "any distro"** — `scripts/lib_pkg.sh` abstracts
+  apt/dnf/yum/pacman/zypper/apk and the wizard/TUI are resolution-agnostic;
+  syntax-checked here, but **package availability/versions vary** — best-effort,
+  not a guarantee on every exotic spin.
+- **📌 Desktop `--purge`** — autodetected DE removal is mapped for common
+  DE×distro combos; default stays the safe reversible boot-to-console. Some
+  combos fall back to "console only" if no purge mapping exists.
+
 ## Second integration scan (new findings)
 
 See `docs/diagrams/` for the annotated DFDs. Newly surfaced by reasoning about

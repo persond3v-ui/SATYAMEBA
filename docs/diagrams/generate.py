@@ -442,10 +442,69 @@ def owner_control():
     c.render("owner_control")
 
 
+def scheduler_flow():
+    c = C(1500, 940, "SATYAMEBA — GPU scheduling, boost & maintainability")
+    legend(c, 28, 64)
+
+    user = c.entity(40, 150, 190, 80, "User", "launch / request boost")
+    admin = c.entity(40, 300, 190, 80, "Admin", "approve boost / drain node")
+    spa = c.box(290, 150, 200, 80, "SPA workspace", ["resource meters", "boost button"], stroke=BLUE)
+    gw = c.box(290, 300, 200, 90, "Gateway", ["scheduler.py", "boost + notifications"], stroke=BLUE)
+
+    c.flow(user.right, spa.left, "launch")
+    c.flow(spa.bottom, gw.top, "POST /launch")
+    c.flow(admin.right, gw.left, "approve / drain", lx=255, ly=345)
+
+    # Decision: A vs N
+    dec = c.box(560, 290, 230, 110, "Place notebook",
+                ["A = active users", "N = online GPU nodes"], stroke=PURPLE, tsize=14)
+    c.flow(gw.right, dec.left)
+
+    excl = c.box(850, 150, 280, 86, "A ≤ N → EXCLUSIVE",
+                 ["pin to an empty node,", "reserve the whole GPU"], stroke=OK)
+    shared = c.box(850, 270, 280, 100, "A > N → SHARED (concurrent)",
+                   ["least-loaded node, NVIDIA_VISIBLE=all;", "notify co-tenants + queue for promotion"], stroke=WARN)
+    boost = c.box(850, 410, 280, 100, "BOOST (admin-approved)",
+                  ["spread across all FREE GPU nodes;", "one session · torchrun rendezvous"], stroke=PURPLE)
+
+    c.flow(dec.p(1.0, 0.25), excl.left, color=OK)
+    c.flow(dec.right, shared.left, color=WARN)
+    c.flow(dec.p(1.0, 0.85), boost.left, color=PURPLE)
+
+    # GPU node row
+    nodes = []
+    labels = [("node-1", "exclusive", OK), ("node-2", "shared x2", WARN),
+              ("node-3", "boost rank", PURPLE), ("node-4 (remote)", "tailnet", ACCENT)]
+    for i, (nm, st, col) in enumerate(labels):
+        nodes.append(c.box(150 + i * 230, 600, 200, 80, nm, [st, "RTX 5070"], stroke=col))
+    for nb, src in zip(nodes[:3], [excl, shared, boost]):
+        c.flow(src.bottom, nb.top, color=ACCENT, dash=True)
+
+    # Remote node over Tailscale
+    ts = c.box(1180, 410, 280, 86, "Remote node", ["Tailscale tailnet (off-VLAN)", "swarm advertises 100.x.y.z"], stroke=ACCENT)
+    c.flow(ts.bottom, nodes[3].top, "join", color=ACCENT, dash=True, lx=1180, ly=560)
+
+    # Traffic widget + TUI
+    widget = c.box(1180, 150, 280, 86, "In-Lab traffic strip", ["node-busy light · N sharing", "live RAM/VRAM/GPU/CPU"], stroke=BLUE)
+    c.flow(nodes[1].p(0.5, 0.0), widget.bottom, "/traffic (scoped token)", color=BLUE, dash=True, lx=1240, ly=470)
+
+    tui = c.box(560, 740, 230, 80, "Console TUI (curses)", ["per-node health + users", "tty1 when DE removed"], stroke=PURPLE)
+    c.flow(gw.bottom, tui.top, "GET /nodes/dashboard", color=PURPLE, lx=470, ly=560)
+
+    c.note(850, 740, 360, [
+        "• Sharing = genuine concurrent execution (no caps).",
+        "• Boost never preempts; newcomers queue + share.",
+        "• At 3 a.m. an approved boost owns the whole cluster.",
+        "• N is read live from the Node table — add nodes freely.",
+    ], color=OK, title="Policy")
+    c.render("scheduler_flow")
+
+
 if __name__ == "__main__":
     level0()
     level1()
     level2()
     flowchart()
     owner_control()
+    scheduler_flow()
     print("done")

@@ -24,6 +24,18 @@ in Docker (backend, frontend, db, hub, monitoring, and the notebooks themselves)
 - **Tamper-evident audit log** of every privileged action.
 - Self-service **password change**.
 - One-command **storage/resource scan** that sizes the deployment to the host.
+- **Dynamic GPU load balancing**: whole node each while quiet, concurrent GPU
+  sharing when busy, admin-approved **multi-GPU boost** for one session (see
+  *Scaling* below).
+- **Neon-themed JupyterLab** (animated gradient borders) with live RAM/VRAM/GPU/
+  CPU widgets and an in-Lab **traffic strip** (node-busy light, "N sharing", a
+  "More GPUs" button) — plus a matching neon SPA.
+- **In-app notifications** (sharing started, boost approved/denied, node freed).
+- **Maintainability**: add nodes any time; **remote/off-VLAN nodes** join over a
+  Tailscale tailnet (a separate wizard); admin **drain/maintenance mode** per node.
+- **Headless option**: uninstall the desktop to save RAM (reversible) and run a
+  **curses console dashboard** (any resolution) on the monitors; everything as
+  **systemd boot services**; a **one-button TUI setup wizard** (`setup/wizard.sh`).
 
 ## Resource profiles (per notebook)
 
@@ -93,15 +105,35 @@ These are **reservations**: Swarm places work by the requested footprint. The
   (`SAT_SANDBOX_RUNTIME=runsc`) for container-escape defense.
 - Strict **CSP** + security headers on the SPA at the edge.
 
-## Scaling & load balancing
+## Scaling & GPU load balancing (dynamic)
 
-- **Notebooks**: each launch is a Swarm service; the scheduler spreads by task
-  count honoring the profile's reservation, and constrains GPU work to
-  `satyameba.gpu==true` nodes. *Example:* 16 users on 4 nodes ≈ 4 notebooks/node
-  (RAM permitting); GPU notebooks capped by physical GPUs.
+The gateway's own scheduler (`gateway/app/scheduler.py`) decides placement so it
+can give people a whole node when it's quiet and fall back to sharing when busy.
+Let **N** = online GPU nodes (read live from the Node table — *not* hardcoded, so
+adding nodes just raises N) and **A** = active notebook users:
+
+- **A ≤ N → exclusive whole node.** The launch is pinned to an empty node and
+  reserves its GPU, so the user has the entire card/VRAM to themselves.
+- **A > N → concurrent sharing.** All nodes are occupied, so the newcomer lands
+  on the least-loaded node and **shares its GPU concurrently** (no Swarm GPU
+  reservation + `NVIDIA_VISIBLE_DEVICES=all`; both kernels run at once — a
+  "hello world" sips nothing, a training job uses what's free). Co-tenants get an
+  in-app **notification** that they're now sharing, and the newcomer is **queued**
+  for promotion to a dedicated node when one frees (promotion is opt-in via a
+  restart so a running kernel is never killed).
+- **Admin-approved boost → multi-GPU, Kaggle-style.** A user requests "more
+  GPUs"; an admin approves; the next launch spreads across every GPU node that is
+  **free** right now (the whole cluster at 3 a.m.). The grant is good for **one
+  session**, then it's spent. `satyameba-ddp your_script.py` wraps `torchrun`
+  with the injected rendezvous for distributed training.
 - **API**: 2 gateway replicas behind the edge/routing mesh.
-- **Not** autoscaling, **not** true payload inspection, **no** GPU time-slicing
-  (one notebook reserves a whole GPU).
+- **Live visibility**: per-user RAM/VRAM/GPU/CPU meters + a node-busy light and
+  "N sharing" indicator in both the SPA workspace and the in-Lab traffic strip.
+- **Honest limits**: sharing is cooperative concurrency (no hard VRAM caps — the
+  RTX 5070 is consumer Blackwell, so **no MIG**). Cross-node multi-GPU needs
+  DDP-aware code. The Swarm GPU sharing path (reserve vs. `NVIDIA_VISIBLE_DEVICES`
+  + `default-runtime=nvidia`) should be validated on real hardware. Not
+  autoscaling; not payload inspection.
 
 ## Availability limits (important)
 

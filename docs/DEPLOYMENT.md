@@ -17,12 +17,25 @@ then confirms `docker run --gpus all … nvidia-smi` works.
 > install, the Debian-stable driver is too old — install a 555+ driver from
 > NVIDIA's CUDA apt repo, reboot, and re-run **Verify GPU**.
 
+## 0.5 One-button TUI wizard (no desktop needed)
+
+For a headless box or over SSH, run the single wizard that does everything step
+by step (deps → Docker → secrets → scan → bring-up → GPU/multi-node/services):
+
+```bash
+sudo ./setup/wizard.sh
+```
+
+It uses `whiptail`/`dialog` (falling back to plain prompts), works at **any
+resolution**, and on any distro (apt/dnf/yum/pacman/zypper/apk via
+`scripts/lib_pkg.sh`). Pick **Single host** for the one-shot bring-up.
+
 ## 1. Single machine (quickest)
 
 ```bash
-sudo python3 setup/satyameba_setup.py     # role: Master, tick "Single-host"
-# or, headless:
-./setup/master_init.sh --single --gpu
+sudo python3 setup/satyameba_setup.py     # role: Master, tick "Single-host" (desktop GUI)
+sudo ./setup/wizard.sh                     # or the TUI wizard → "Single host"
+./setup/master_init.sh --single --gpu      # or fully headless
 ```
 Open `https://localhost/`. The admin credentials are in the generated `.env`.
 
@@ -209,3 +222,56 @@ crypto-erases after the grace window — **disclose this wipe-on-tamper to stude
 `backup.sh` dumps Postgres and copies `.env` + `secrets/` (sensitive — store the
 archive safely). Add a cron/systemd timer for regular dumps. Also snapshot the
 NFS export (or per-user volumes) for notebook contents.
+
+## 14. GPU scheduling & the boost flow
+
+GPU notebooks need `SAT_GPU_ENABLED=true` and `scripts/setup_gpu_runtime.sh` on
+each GPU node (it advertises the GPU to Swarm **and** sets `default-runtime=nvidia`
+so concurrent-share notebooks can see the card). Then:
+
+* **Exclusive vs. shared** is automatic — see *Scaling* in `CHARACTERISTICS.md`.
+* **Boost**: a user clicks **Request more GPUs** (SPA workspace, or the in-Lab
+  strip's button); an admin approves under **Admin → Boosts** (and can adjust the
+  node count). The user's next launch is boosted for one session; inside it,
+  `satyameba-ddp train.py …` wraps `torchrun` with the injected rendezvous.
+* **Drain a node** before a reboot under **Admin → Nodes → Drain** (running
+  notebooks are left alone; no new ones land there).
+
+> Validate GPU sharing on real hardware: single-host sharing is native; the
+> multi-node Swarm path (reserve-for-exclusive vs. `NVIDIA_VISIBLE_DEVICES=all`
+> for shared) depends on `default-runtime=nvidia` and your driver/toolkit.
+
+## 15. Remote / off-VLAN nodes (Tailscale)
+
+Same-VLAN workers use `worker_join.sh` (no Tailscale). For a node **elsewhere**
+(another building, a home machine), use the *separate* Tailscale wizard so the
+two paths never get confused:
+
+```bash
+sudo ./setup/remote_node_join.sh \
+     --master-ts-ip 100.x.y.z --join-token SWMTKN-... --node-secret <secret> \
+     [--authkey tskey-...] [--gpu] [--compute-only]
+```
+
+It installs Tailscale (outbound-only WireGuard, no router config), joins the
+swarm advertising its **tailnet** IP, registers, and starts a heartbeat. Use
+`--compute-only` for an untrusted location (keep NFS/persistent data off it).
+
+## 16. Headless nodes: uninstall the desktop + boot services + console TUI
+
+Free the RAM a desktop eats and run the platform as boot services:
+
+```bash
+sudo ./setup/install_services.sh --mode compose --tui   # or --mode swarm
+sudo ./setup/uninstall_desktop.sh                       # boot-to-console (reversible)
+sudo ./setup/uninstall_desktop.sh --purge --yes         # also remove the DE (autodetected)
+sudo ./setup/reinstall_desktop.sh                       # undo any time
+```
+
+* `install_services.sh` registers `satyameba.service` (whole stack at boot) and,
+  with `--tui`, `satyameba-tui.service` which owns **tty1**.
+* The **curses dashboard** (`tui/satyameba_tui.py`, also runnable on demand as
+  `satyameba-tui` over SSH) shows live per-node health + active users at any
+  resolution, reading `/etc/satyameba/node.env`.
+* Default uninstall just switches the boot target to console (instant RAM win,
+  fully reversible); `--purge` removes the autodetected DE on any distro.

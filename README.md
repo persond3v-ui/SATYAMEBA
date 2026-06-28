@@ -58,13 +58,36 @@ plug-n-play.
 - **Tamper-evident audit log** — every privileged action is hash-chained and
   verifiable.
 
-### ⚖️ Cluster & scheduling
-- **Master + workers over Docker Swarm** — workers join the master with a single
-  token on the same VLAN.
-- **Load balancing** — Swarm spreads notebooks across nodes by their reserved
-  footprint, and pins GPU notebooks to GPU-labelled nodes.
+### ⚖️ Cluster & GPU scheduling
+- **Master + workers over Docker Swarm** — same-VLAN workers join with one token;
+  **remote / off-VLAN nodes** join over a Tailscale tailnet (a separate wizard).
+- **Dynamic GPU load balancing** — while the cluster is quiet every active user
+  gets a **whole node** (full GPU/VRAM); once it fills, newcomers **share a node's
+  GPU concurrently** (co-tenants are notified, newcomer queued for promotion). N
+  is read live from the node list, so **adding nodes just works**.
+- **Kaggle-style GPU boost** — request "more GPUs"; an admin approves; your next
+  session spreads across every free GPU node (the whole cluster at 3 a.m.).
+  `satyameba-ddp train.py` wraps `torchrun` for distributed training.
+- **Maintainability** — admin **drain/maintenance mode** per node before a reboot;
+  add nodes any time.
 - **Storage-aware sizing** — a scan reads each host's disk/RAM/CPU and sizes the
   deployment to it.
+
+### ✨ Beautiful UI & live resources
+- **Neon JupyterLab theme** — animated cyan→magenta→violet gradient borders, glow,
+  and a matching neon SPA.
+- **Live resource widgets** — RAM/VRAM/GPU/CPU meters, a node-busy light and an
+  **"N sharing"** indicator in both the workspace and an in-Lab **traffic strip**
+  (with a "More GPUs" button).
+- **In-app notifications** — sharing started, boost approved/denied, node freed.
+
+### 🖥️ Headless & one-button setup
+- **One-button TUI wizard** (`setup/wizard.sh`) — deps → Docker → secrets → scan →
+  bring-up → GPU/multi-node/services, over SSH or console, **any resolution**, on
+  **any distro** (apt/dnf/yum/pacman/zypper/apk).
+- **Uninstall the desktop to save RAM** (reversible) and run a **neon curses
+  dashboard** on the monitors showing per-node health + active users.
+- **Boot services** — the whole stack starts on power-on via systemd; failproof.
 
 ### 📊 Monitoring
 - **Prometheus + Grafana** — per-node CPU, GPU, network and storage (node-exporter

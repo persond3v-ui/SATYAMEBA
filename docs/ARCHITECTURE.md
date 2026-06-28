@@ -57,13 +57,22 @@
 
 ## Load balancing
 
-Two layers:
+Three layers:
 1. **Service load balancing** — the edge and Swarm's routing mesh distribute
    gateway/API traffic across gateway replicas.
-2. **Workload placement** — when a user launches a notebook, SwarmSpawner
-   submits a service and the Swarm scheduler places it on the node with spare
-   capacity (and a free GPU, when the user's workload requests one via the
-   `node.labels.satyameba.gpu==true` constraint).
+2. **GPU-aware placement (the gateway decides)** — `gateway/app/scheduler.py`
+   chooses the node and sharing mode *before* asking the Hub to spawn, so it can
+   give each user a whole node while the cluster is quiet (A ≤ N) and switch to
+   concurrent GPU sharing when it's busy (A > N), or spread an admin-approved
+   **boost** across every free GPU node. Placement is recorded authoritatively in
+   `notebook_runs`; the Hub honours the node pin / reservation the gateway passes.
+   New supporting models: `gpu_boost_requests`, `notebook_runs`, `notifications`.
+3. **Swarm placement** — SwarmSpawner submits the service with the gateway's
+   constraints (`node.hostname==…`, `node.labels.satyameba.gpu==true`, and a GPU
+   reservation for exclusive jobs vs. `NVIDIA_VISIBLE_DEVICES=all` for shared).
+
+The console **curses TUI** (`tui/`) reads `GET /api/nodes/dashboard` for an
+on-monitor view of node health + active users when the desktop is removed.
 
 ## Request lifecycle (launch a notebook)
 

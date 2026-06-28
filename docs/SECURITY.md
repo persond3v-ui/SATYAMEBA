@@ -113,6 +113,16 @@ A separate, out-of-band layer that survives a hostile co-admin (`owner-setup/`):
 - **2FA brute-force is locked**, not just rate-limited, after repeated bad codes.
 - **Admin recovery without back-doors** — admins can reset a user's 2FA or
   password (one-time temp + forced change) or delete the account; all audited.
+- **Scoped in-notebook traffic token.** The in-Lab traffic widget reads the
+  user's placement through a **narrow, read-only JWT** (`type=traffic`) injected
+  into their container at spawn. It can do nothing but read *that* user's own
+  cluster view — no session, no mutations — so it's harmless even though the
+  user controls their container, and the notebook's server extension proxies it
+  server-side so the token never reaches browser JS. The internal shared secret
+  is **never** placed in a user notebook.
+- **GPU boost is admin-gated and one-shot.** Multi-GPU/cross-node power requires
+  an explicit admin approval (audited) and is consumed by a single launch, so a
+  user can't self-escalate cluster resources. Node drain is admin-only + audited.
 
 ### Token storage (an accepted tradeoff)
 
