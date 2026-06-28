@@ -291,6 +291,107 @@ def test_schema_is_migration_managed(client):
         assert insp.has_table(t), f"missing table {t}"
 
 
+def _hub_mock(monkeypatch):
+    import app.hub as hub
+
+    async def _noop(*a, **k):
+        return None
+
+    async def _empty(*a, **k):
+        return []
+
+    for name in ("ensure_user", "start_server", "stop_server", "delete_user"):
+        monkeypatch.setattr(hub, name, _noop)
+    monkeypatch.setattr(hub, "list_active", _empty)
+
+
+def test_owner_invisible_to_admins(client, admin):
+    # the `admin` fixture IS the owner; make a real (non-owner) admin.
+    make_user(client, admin, "subadmin", role="admin")
+    sub = login(client, "subadmin").json()
+    sub_list = client.get("/api/admin/users", headers=_hdr(sub["access_token"])).json()
+    assert all(u["role"] != "owner" for u in sub_list)          # owner hidden from admin
+    owner_list = client.get("/api/admin/users", headers=_hdr(admin["access_token"])).json()
+    assert any(u["role"] == "owner" for u in owner_list)        # owner sees themselves
+
+
+def test_owner_activity_not_logged(client, admin):
+    make_user(client, admin, "logtarget")  # owner approves -> must NOT be recorded
+    owner_un = client.get("/api/auth/me", headers=_hdr(admin["access_token"])).json()["username"]
+    aud = client.get("/api/admin/audit?limit=1000", headers=_hdr(admin["access_token"])).json()
+    assert all(a["actor_label"] != owner_un for a in aud)
+
+
+def test_appoint_admin_from_web(client, admin, monkeypatch):
+    _hub_mock(monkeypatch)
+    uid = make_user(client, admin, "promoteme")
+    at, sk = admin["access_token"], admin["signing_key"]
+    p = f"/api/admin/users/{uid}/role"
+    body = json.dumps({"role": "admin"}).encode()
+    r = client.post(p, headers=_sign(at, sk, "POST", p, body), content=body)
+    assert r.status_code == 200 and r.json()["role"] == "admin"
+
+
+def test_invite_code_auto_approves(client, admin):
+    at, sk = admin["access_token"], admin["signing_key"]
+    body = json.dumps({"role": "user", "max_uses": 2}).encode()
+    r = client.post("/api/admin/invites", headers=_sign(at, sk, "POST", "/api/admin/invites", body),
+                    content=body)
+    assert r.status_code == 201, r.text
+    code = r.json()["code"]
+    reg = client.post("/api/auth/register", json={
+        "email": "inv@lab.io", "username": "invited", "password": USER_PW, "invite_code": code})
+    assert reg.status_code == 201 and reg.json()["status"] == "approved"
+    assert login(client, "invited").status_code == 200
+
+
+def test_bulk_suspend(client, admin, monkeypatch):
+    _hub_mock(monkeypatch)
+    u1 = make_user(client, admin, "bulk1")
+    make_user(client, admin, "bulk2")
+    at, sk = admin["access_token"], admin["signing_key"]
+    body = json.dumps({"action": "suspend", "user_ids": [u1,
+                       next(u["id"] for u in client.get("/api/admin/users",
+                            headers=_hdr(at)).json() if u["username"] == "bulk2")]}).encode()
+    r = client.post("/api/admin/users/bulk",
+                    headers=_sign(at, sk, "POST", "/api/admin/users/bulk", body), content=body)
+    assert r.status_code == 200 and r.json()["done"] == 2
+    assert login(client, "bulk1").status_code == 403   # suspended
+
+
+def test_maintenance_blocks_launch(client, admin, monkeypatch):
+    _hub_mock(monkeypatch)
+    make_user(client, admin, "maintuser")
+    c = login(client, "maintuser").json()
+    at, sk = c["access_token"], c["signing_key"]
+    aat, ask = admin["access_token"], admin["signing_key"]
+    on = json.dumps({"on": True, "message": "back at 6"}).encode()
+    client.post("/api/admin/maintenance",
+                headers=_sign(aat, ask, "POST", "/api/admin/maintenance", on), content=on)
+    lb = json.dumps({"profile": "medium"}).encode()
+    r = client.post("/api/notebooks/launch",
+                    headers=_sign(at, sk, "POST", "/api/notebooks/launch", lb), content=lb)
+    assert r.status_code == 503
+    off = json.dumps({"on": False, "message": ""}).encode()
+    client.post("/api/admin/maintenance",
+                headers=_sign(aat, ask, "POST", "/api/admin/maintenance", off), content=off)
+    r2 = client.post("/api/notebooks/launch",
+                     headers=_sign(at, sk, "POST", "/api/notebooks/launch", lb), content=lb)
+    assert r2.status_code == 200
+
+
+def test_user_sees_own_logs(client, admin, monkeypatch):
+    _hub_mock(monkeypatch)
+    make_user(client, admin, "logviewer")
+    c = login(client, "logviewer").json()
+    at, sk = c["access_token"], c["signing_key"]
+    lb = json.dumps({"profile": "medium"}).encode()
+    client.post("/api/notebooks/launch",
+                headers=_sign(at, sk, "POST", "/api/notebooks/launch", lb), content=lb)
+    logs = client.get("/api/auth/me/logs", headers=_hdr(at)).json()
+    assert any(x["action"] == "notebook.launch" for x in logs)
+
+
 def test_metrics_endpoint(client):
     client.get("/healthz")
     assert "satyameba_http_requests_total" in client.get("/metrics").text

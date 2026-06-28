@@ -22,7 +22,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 
-from .. import audit, hub, scheduler
+from .. import audit, hub, kv, scheduler
 from ..config import get_settings
 from ..database import get_db
 from ..deps import get_current_user
@@ -34,6 +34,7 @@ from ..models import (
     NotebookRun,
     SsoToken,
     User,
+    UserRole,
 )
 from ..schemas import BoostOut, BoostRequestCreate, NotificationOut
 from ..timeutil import utcnow
@@ -68,6 +69,12 @@ async def launch(request: Request, user: User = Depends(get_current_user), db=De
     if profile not in VALID_PROFILES:
         profile = "medium"
 
+    # Maintenance mode blocks new launches for everyone but admins/owner.
+    if kv.is_maintenance(db) and user.role not in (UserRole.admin, UserRole.owner):
+        msg = kv.get_setting(db, kv.MAINTENANCE_MSG, "") or \
+            "The platform is in maintenance mode. Please try again shortly."
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, msg)
+
     # A granted, unconsumed boost upgrades this launch to multi-GPU.
     boost = db.execute(
         select(GpuBoostRequest).where(
@@ -75,6 +82,17 @@ async def launch(request: Request, user: User = Depends(get_current_user), db=De
             GpuBoostRequest.status == BoostStatus.approved,
         ).order_by(GpuBoostRequest.created_at.desc())
     ).scalars().first()
+
+    # Per-user GPU-hours quota: drop to CPU (and skip any boost) once it's spent.
+    if user.gpu_hours_limit is not None and (profile == "gpu" or boost is not None):
+        used = scheduler.gpu_hours_used(db, user.id)
+        if used >= user.gpu_hours_limit:
+            profile = "medium" if profile == "gpu" else profile
+            boost = None
+            scheduler.notify(db, user.id, "warning",
+                             f"GPU-hours quota reached ({used:.1f}/{user.gpu_hours_limit}h). "
+                             "Running without GPU until an admin raises your quota.")
+            db.commit()
 
     # Close out any previous run of this user before re-placing them.
     old = _active_run(db, user)
@@ -220,7 +238,10 @@ def _build_cluster(db, username: str) -> dict:
 
 @router.get("/cluster")
 def cluster(user: User = Depends(get_current_user), db=Depends(get_db)):
-    return _build_cluster(db, user.username)
+    data = _build_cluster(db, user.username)
+    data["maintenance"] = {"on": kv.is_maintenance(db),
+                           "message": kv.get_setting(db, kv.MAINTENANCE_MSG, "")}
+    return data
 
 
 @router.get("/traffic")

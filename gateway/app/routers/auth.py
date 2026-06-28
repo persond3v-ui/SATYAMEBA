@@ -3,16 +3,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import audit, hub
 from ..config import get_settings
 from ..database import get_db
-from ..deps import get_current_session
-from ..models import User, UserRole, UserSession, UserStatus
+from ..deps import get_current_session, get_current_user
+from ..models import AuditLog, InviteCode, User, UserRole, UserSession, UserStatus
 from ..schemas import (
+    AuditOut,
     ChangePasswordRequest,
     LoginRequest,
     RefreshRequest,
@@ -36,7 +37,7 @@ from ..security import (
     verify_password,
     verify_totp,
 )
-from ..timeutil import aware
+from ..timeutil import aware, utcnow
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 settings = get_settings()
@@ -104,17 +105,32 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         # Do not reveal which field collided (user enumeration, OWASP A07).
         raise HTTPException(status.HTTP_409_CONFLICT, "Could not register with those details")
 
+    # A valid invite code auto-approves the account (skips the manual queue).
+    role, status_, invite = UserRole.user, UserStatus.pending, None
+    if payload.invite_code:
+        invite = db.get(InviteCode, payload.invite_code)
+        exp_ok = invite is None or invite.expires_at is None or aware(invite.expires_at) > utcnow()
+        if invite and invite.active and invite.uses < invite.max_uses and exp_ok:
+            role, status_ = invite.role, UserStatus.approved
+        else:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invite code is invalid or used up")
+
     user = User(
         email=payload.email,
         username=payload.username,
         full_name=payload.full_name,
         password_hash=hash_password(payload.password),
-        role=UserRole.user,
-        status=UserStatus.pending,
+        role=role,
+        status=status_,
     )
     db.add(user)
+    if invite is not None:
+        invite.uses += 1
+        if invite.uses >= invite.max_uses:
+            invite.active = False
     db.commit()
     db.refresh(user)
+    # Invited (auto-approved) users are mirrored into the Hub on first launch.
     audit.record(
         db,
         action="user.register",
@@ -123,6 +139,7 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
         target=user.email,
         ip=_client_ip(request),
         user_agent=request.headers.get("user-agent", ""),
+        detail={"invited": bool(invite)},
     )
     return user
 
@@ -286,3 +303,20 @@ def twofa_disable(payload: TwoFACodeRequest, request: Request,
 @router.get("/me", response_model=UserOut)
 def me(pair=Depends(get_current_session)):
     return pair[0]
+
+
+@router.get("/me/logs", response_model=list[AuditOut])
+def my_logs(
+    limit: int = Query(default=200, le=1000),
+    q: str | None = Query(default=None, description="search action/target"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """A user's own activity log (their actions only)."""
+    stmt = select(AuditLog).where(AuditLog.actor_id == user.id).order_by(AuditLog.id.desc())
+    if q:
+        like = f"%{q.lower()}%"
+        stmt = stmt.where(
+            func.lower(AuditLog.action).like(like) | func.lower(AuditLog.target).like(like)
+        )
+    return list(db.execute(stmt.limit(limit)).scalars())

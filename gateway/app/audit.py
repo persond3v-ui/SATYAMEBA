@@ -14,7 +14,7 @@ import json
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import AuditLog
+from .models import AuditLog, User, UserRole
 from .timeutil import aware
 
 
@@ -44,7 +44,13 @@ def record(
     ip: str = "",
     user_agent: str = "",
     detail: dict | None = None,
-) -> AuditLog:
+) -> AuditLog | None:
+    # The owner is invisible: their actions are never recorded. (Centralised here
+    # so no call site can accidentally log owner activity.)
+    if actor_id is not None:
+        actor = db.get(User, actor_id)
+        if actor is not None and actor.role == UserRole.owner:
+            return None
     prev = db.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(1)).scalar_one_or_none()
     prev_hash = prev.entry_hash if prev else ""
     entry = AuditLog(

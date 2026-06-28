@@ -72,6 +72,11 @@ class User(Base):
     # Force a password change (e.g. the seeded bootstrap admin)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Admin-ease fields: account expiry (auto-suspend), GPU-hours quota, tags/groups.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    gpu_hours_limit: Mapped[float | None] = mapped_column(nullable=True)  # None = unlimited
+    tags: Mapped[list] = mapped_column(JSONType, default=list)
+
     sessions: Mapped[list["UserSession"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -197,6 +202,31 @@ class Notification(Base):
     message: Mapped[str] = mapped_column(String(512), default="")
     read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class InviteCode(Base):
+    """A registration code that auto-approves the new account (skips the manual
+    approval queue) — for onboarding a class roster in bulk."""
+
+    __tablename__ = "invite_codes"
+
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.user, nullable=False)
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    uses: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Setting(Base):
+    """Tiny key/value store for runtime toggles (maintenance mode, banner …)."""
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(2048), default="")
 
 
 class AuditLog(Base):

@@ -116,6 +116,19 @@ def plan_placement(db: Session, username: str, profile: str, boost=None) -> Plac
                      gpus=1 if wants_gpu else 0, colocated=colocated, queued=True)
 
 
+def gpu_hours_used(db: Session, user_id: str) -> float:
+    """Sum of a user's GPU notebook-run durations (for the per-user GPU-hours cap)."""
+    total = 0.0
+    for r in db.execute(select(NotebookRun).where(
+        NotebookRun.user_id == user_id, NotebookRun.gpus > 0
+    )).scalars():
+        start = aware(r.started_at)
+        end = aware(r.stopped_at) or utcnow()
+        if start:
+            total += max(0.0, (end - start).total_seconds()) / 3600.0
+    return round(total, 2)
+
+
 def notify(db: Session, user_id: str, kind: str, message: str) -> None:
     db.add(Notification(user_id=user_id, kind=kind, message=message[:512]))
 

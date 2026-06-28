@@ -52,6 +52,13 @@ def get_current_session(request: Request, db: Session = Depends(get_db)) -> tupl
         # An admin may have suspended the account mid-session.
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"Account is {user.status.value}")
 
+    # Account expiry (e.g. end of term): auto-suspend a lapsed non-admin account.
+    if (user.expires_at and aware(user.expires_at) < utcnow()
+            and user.role not in (UserRole.admin, UserRole.owner)):
+        user.status = UserStatus.suspended
+        db.commit()
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account expired")
+
     # Enforce a pending password change: lock the user out of everything except
     # changing it (the SPA routes them to the change-password form).
     if user.must_change_password and request.url.path not in _PW_CHANGE_ALLOWED:

@@ -14,6 +14,7 @@ class RegisterRequest(BaseModel):
     username: str = Field(pattern=USERNAME_RE)
     full_name: str = Field(default="", max_length=255)
     password: str = Field(min_length=10, max_length=128)
+    invite_code: str | None = Field(default=None, max_length=32)  # auto-approve if valid
 
     @field_validator("password")
     @classmethod
@@ -106,6 +107,23 @@ class RejectRequest(BaseModel):
     reason: str = Field(default="", max_length=512)
 
 
+class RoleUpdate(BaseModel):
+    role: str = Field(pattern="^(user|admin)$")   # owner can never be granted/removed
+
+
+class CreateUserRequest(BaseModel):
+    email: EmailStr
+    username: str = Field(pattern=USERNAME_RE)
+    full_name: str = Field(default="", max_length=255)
+    password: str = Field(min_length=10, max_length=128)
+    role: str = Field(default="user", pattern="^(user|admin)$")
+
+
+class BulkAction(BaseModel):
+    action: str = Field(pattern="^(approve|reject|suspend|reinstate|delete)$")
+    user_ids: list[str] = Field(min_length=1, max_length=500)
+
+
 class NodeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -154,6 +172,47 @@ class NotificationOut(BaseModel):
     message: str
     read: bool
     created_at: datetime
+
+
+class InviteCreate(BaseModel):
+    role: str = Field(default="user", pattern="^(user|admin)$")
+    max_uses: int = Field(default=1, ge=1, le=1000)
+    expires_in_days: int | None = Field(default=None, ge=1, le=365)
+
+
+class InviteOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    code: str
+    role: str
+    max_uses: int
+    uses: int
+    active: bool
+    created_at: datetime
+    expires_at: datetime | None = None
+
+
+class ExpiryUpdate(BaseModel):
+    days: int | None = Field(default=None, ge=1, le=3650)   # set expiry N days out
+    clear: bool = False                                     # or remove the expiry
+
+
+class QuotaUpdate(BaseModel):
+    gpu_hours_limit: float | None = Field(default=None, ge=0)  # None+clear=unlimited
+    clear: bool = False
+
+
+class TagsUpdate(BaseModel):
+    tags: list[str] = Field(default_factory=list, max_length=20)
+
+
+class AnnounceRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=512)
+    kind: str = Field(default="info", pattern="^(info|success|warning|boost)$")
+
+
+class MaintenanceRequest(BaseModel):
+    on: bool
+    message: str = Field(default="", max_length=512)
 
 
 class AuditOut(BaseModel):
