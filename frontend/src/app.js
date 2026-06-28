@@ -28,6 +28,17 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 const badge = (s) => `<span class="badge ${esc(s)}">${esc(s)}</span>`;
 const go = (hash) => (location.hash = hash);
 
+// Reusable audit-log table (used by the user's own logs and the admin views).
+function logTable(rows, withActor = false) {
+  if (!rows || !rows.length) return `<p class="muted">No activity.</p>`;
+  const head = `<tr><th>Time</th>${withActor ? "<th>Actor</th>" : ""}<th>Action</th><th>Target</th><th>IP</th></tr>`;
+  const body = rows.map((a) => `<tr>
+    <td class="muted">${new Date(a.timestamp).toLocaleString()}</td>
+    ${withActor ? `<td>${esc(a.actor_label)}</td>` : ""}
+    <td>${esc(a.action)}</td><td>${esc(a.target)}</td><td class="muted">${esc(a.ip)}</td></tr>`).join("");
+  return `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
 function renderNav() {
   if (!me) { nav.innerHTML = `<a data-go="#/login">Sign in</a><a data-go="#/register">Register</a>`; return; }
   const adminLink = isAdmin(me) ? `<a data-go="#/admin">Admin</a>` : "";
@@ -137,6 +148,8 @@ function registerView() {
       <label>Email</label><input id="em" type="email" />
       <label>Password</label><input id="pw" type="password" />
       <p class="hint">Min 10 chars, mixing 3 of: lower, upper, digit, symbol.</p>
+      <label>Invite code <span class="muted">(optional — skips the approval wait)</span></label>
+      <input id="ic" placeholder="paste an invite code if you have one" />
       <div class="btn-row"><button id="go">Submit request</button>
         <button class="secondary" data-go="#/login">Back to sign in</button></div>
       <div class="err" id="err"></div>
@@ -145,13 +158,17 @@ function registerView() {
   view.querySelector("#go").onclick = async () => {
     const err = view.querySelector("#err"); err.textContent = "";
     try {
-      await api.register({
+      const ic = view.querySelector("#ic").value.trim();
+      const res = await api.register({
         full_name: view.querySelector("#fn").value.trim(),
         username: view.querySelector("#un").value.trim().toLowerCase(),
         email: view.querySelector("#em").value.trim(),
         password: view.querySelector("#pw").value,
+        ...(ic ? { invite_code: ic } : {}),
       });
-      toast("Request submitted — an admin will review it shortly.", "ok");
+      toast(res.status === "approved"
+        ? "Account created — you can sign in now."
+        : "Request submitted — an admin will review it shortly.", "ok");
       go("#/login");
     } catch (e) { err.textContent = e.message; }
   };
@@ -183,6 +200,7 @@ function forcedChangeView() {
 // ------------------------------------------------------------- user workspace
 async function workspaceView() {
   view.innerHTML = `
+    <div id="maintBanner" class="hidden"></div>
     <div class="card launch-hero">
       <div class="muted">Hello ${esc(me.full_name || me.username)}</div>
       <div class="big">Your private notebook environment</div>
@@ -250,6 +268,12 @@ async function workspaceView() {
     <div class="card" style="max-width:420px" id="twofa">
       <h2>Two-factor authentication ${me.totp_enabled ? badge("approved") : ""}</h2>
       <div id="twofaBody"></div>
+    </div>
+
+    <div class="card" id="mylogs">
+      <h2>My activity</h2>
+      <input id="logSearch" placeholder="🔎 search your actions…" />
+      <div id="logTable"><p class="muted">Loading…</p></div>
     </div>`;
   const state = view.querySelector("#state");
   refreshNbStatus(state);
@@ -292,6 +316,18 @@ async function workspaceView() {
   refreshCluster();
   if (wsTimer) clearInterval(wsTimer);
   wsTimer = setInterval(refreshCluster, 7000);
+
+  // My activity — searchable client-side.
+  let myLogRows = [];
+  const renderLogs = (filter = "") => {
+    const f = filter.toLowerCase();
+    const rows = myLogRows.filter((a) => !f || `${a.action} ${a.target}`.toLowerCase().includes(f));
+    const el = view.querySelector("#logTable");
+    if (el) el.innerHTML = logTable(rows);
+  };
+  api.myLogs().then((r) => { myLogRows = r; renderLogs(); }).catch(() => {});
+  const ls = view.querySelector("#logSearch");
+  if (ls) ls.oninput = (e) => renderLogs(e.target.value);
   // Deep link from the in-notebook "More GPUs" button.
   if (location.hash.includes("boost=1")) view.querySelector("#boostCard").scrollIntoView();
 
@@ -312,6 +348,13 @@ async function refreshCluster() {
   const dot = document.getElementById("cl-dot"); if (!dot) return;
   try {
     const c = await api.cluster();
+    const mb = document.getElementById("maintBanner");
+    if (mb) {
+      if (c.maintenance && c.maintenance.on) {
+        mb.className = "card"; mb.style.borderColor = "var(--warn)";
+        mb.innerHTML = `🛠️ <strong>Maintenance mode</strong> — ${esc(c.maintenance.message || "new launches are paused.")}`;
+      } else { mb.className = "hidden"; mb.innerHTML = ""; }
+    }
     const you = c.you || {};
     dot.className = `dot ${you.status || "idle"}`;
     const st = document.getElementById("cl-status");
@@ -385,7 +428,7 @@ async function refreshNbStatus(el) {
 }
 
 // --------------------------------------------------------------- admin views
-const adminTabs = ["Overview", "Approvals", "Boosts", "Users", "Nodes", "Sessions", "Monitoring", "Audit"];
+const adminTabs = ["Overview", "Approvals", "Boosts", "Users", "Invites", "Nodes", "Sessions", "Monitoring", "Audit"];
 async function adminView(tab = "Overview") {
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   view.innerHTML = `
@@ -406,6 +449,7 @@ async function adminView(tab = "Overview") {
     else if (tab === "Approvals") await renderApprovals(panel);
     else if (tab === "Boosts") await renderBoosts(panel);
     else if (tab === "Users") await renderUsers(panel);
+    else if (tab === "Invites") await renderInvites(panel);
     else if (tab === "Nodes") await renderNodes(panel);
     else if (tab === "Sessions") await renderSessions(panel);
     else if (tab === "Monitoring") renderMonitoring(panel);
@@ -431,6 +475,19 @@ async function renderOverview(p) {
     <div class="stat"><div class="n">${u.approved || 0}</div><div class="l">Approved</div></div>
     <div class="stat"><div class="n">${u.suspended || 0}</div><div class="l">Suspended</div></div>
     <div class="stat"><div class="n">${s.nodes || 0}</div><div class="l">Cluster nodes</div></div>
+  </div>
+
+  <div class="card" id="attention"><h2>Needs attention</h2><p class="muted">checking…</p></div>
+
+  <div class="card">
+    <h2>Manage</h2>
+    <div class="btn-row" style="align-items:center">
+      <button id="maintBtn" class="secondary">Toggle maintenance</button>
+      <span id="maintState" class="muted"></span>
+    </div>
+    <label>Broadcast announcement (to every user's bell)</label>
+    <input id="annMsg" placeholder="e.g. cluster maintenance tonight 8–9pm" />
+    <div class="btn-row"><button id="annBtn" class="secondary">Send announcement</button></div>
   </div>
 
   <div class="card" style="margin-top:18px">
@@ -472,6 +529,46 @@ async function renderOverview(p) {
       ? `${badge("approved")} Tamper-evident log intact.`
       : `${badge("suspended")} Chain broken at entry #${v.first_tampered_id} — investigate.`;
   } catch (_) {}
+
+  // Needs-attention panel (each tile jumps to the relevant tab).
+  try {
+    const a = await api.attention();
+    const tile = (n, l, hash) =>
+      `<div class="stat" ${hash ? `style="cursor:pointer" data-go="${hash}"` : ""}>
+         <div class="n">${n}</div><div class="l">${l}</div></div>`;
+    p.querySelector("#attention").innerHTML = `<h2>Needs attention</h2><div class="grid">
+      ${tile(a.pending_users, "Pending approvals", "#/admin/approvals")}
+      ${tile(a.pending_boosts, "GPU boost requests", "#/admin/boosts")}
+      ${tile(a.offline_nodes, "Offline nodes", "#/admin/nodes")}
+      ${tile(a.locked_users, "Locked accounts", "#/admin/users")}
+      ${tile(a.maintenance ? "ON" : "off", "Maintenance")}</div>`;
+    p.querySelectorAll("#attention [data-go]").forEach((el) => (el.onclick = () => go(el.dataset.go)));
+  } catch (_) {}
+
+  // Maintenance toggle + announcement broadcast.
+  const refreshMaint = async () => {
+    try {
+      const m = await api.getMaintenance();
+      const el = p.querySelector("#maintState");
+      if (el) el.textContent = m.on ? `ON — ${m.message || ""}` : "off";
+      return m;
+    } catch (_) { return { on: false }; }
+  };
+  let maint = await refreshMaint();
+  const mbtn = p.querySelector("#maintBtn");
+  if (mbtn) mbtn.onclick = async () => {
+    const on = !maint.on;
+    const msg = on ? (prompt("Message users will see:", maint.message || "Back shortly.") || "") : "";
+    try { await api.setMaintenance(on, msg); toast(`Maintenance ${on ? "on" : "off"}`, "ok"); maint = await refreshMaint(); }
+    catch (e) { toast(e.message, "bad"); }
+  };
+  const abtn = p.querySelector("#annBtn");
+  if (abtn) abtn.onclick = async () => {
+    const m = p.querySelector("#annMsg").value.trim();
+    if (!m) return;
+    try { const r = await api.announce(m); toast(`Sent to ${r.sent} users`, "ok"); p.querySelector("#annMsg").value = ""; }
+    catch (e) { toast(e.message, "bad"); }
+  };
 }
 
 async function renderApprovals(p) {
@@ -533,43 +630,190 @@ async function renderBoosts(p) {
   });
 }
 
+let _userQuery = "";
 async function renderUsers(p) {
-  const list = await api.users();
-  p.innerHTML = `<div class="card"><table><thead><tr>
-    <th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Last login</th><th>Action</th>
-    </tr></thead><tbody>${list.map(rowFor).join("")}</tbody></table></div>`;
+  async function load() {
+    const list = await api.usersSearch(_userQuery);
+    p.innerHTML = `
+      <div class="card">
+        <h2>Add a user / admin</h2>
+        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+          <input id="nu_un" placeholder="username" />
+          <input id="nu_em" placeholder="email" />
+          <input id="nu_fn" placeholder="full name" />
+          <input id="nu_pw" type="password" placeholder="temp password" />
+          <select id="nu_role"><option value="user">user</option><option value="admin">admin</option></select>
+        </div>
+        <div class="btn-row"><button id="nu_go">Create account</button>
+          <span class="hint">They change the password on first login.</span></div>
+      </div>
+      <div class="card">
+        <div class="btn-row" style="justify-content:space-between;align-items:center">
+          <input id="uSearch" placeholder="🔎 search users…" value="${esc(_userQuery)}" style="max-width:300px" />
+          <span id="bulkBar" class="muted"></span>
+        </div>
+        <table><thead><tr>
+          <th><input type="checkbox" id="selAll" /></th><th>User</th><th>Email</th><th>Role</th>
+          <th>Status</th><th>Tags</th><th>Last login</th><th>Action</th>
+        </tr></thead><tbody>${list.map(rowFor).join("")}</tbody></table>
+      </div>`;
+    wire();
+  }
   function rowFor(u) {
-    if (u.username === me.username) {
-      var act = '<span class="muted">you</span>';
-    } else {
+    const mine = u.username === me.username;
+    const twofa = u.totp_enabled ? " 🔒" : "";
+    const tags = (u.tags || []).map((t) => `<span class="pill">${esc(t)}</span>`).join(" ");
+    let act = '<span class="muted">you</span>';
+    if (!mine) {
       const susp = u.status === "suspended"
         ? `<button class="ok reinstate">Reinstate</button>`
-        : `<button class="danger suspend">Kick off</button>`;
-      var act = `${susp}
-        <button class="secondary reset2fa">Reset 2FA</button>
-        <button class="secondary resetpw">Reset PW</button>
-        <button class="danger del">Delete</button>`;
+        : `<button class="danger suspend">Kick</button>`;
+      const promo = u.role === "admin"
+        ? `<button class="secondary demote">Demote</button>`
+        : `<button class="secondary promote">Make admin</button>`;
+      act = `${susp} ${promo}
+        <button class="secondary logs">Logs</button>
+        <button class="secondary manage">Manage</button>
+        <button class="secondary reset2fa">2FA</button>
+        <button class="secondary resetpw">PW</button>
+        <button class="danger del">Del</button>`;
     }
-    const twofa = u.totp_enabled ? ' 🔒' : '';
-    return `<tr data-id="${u.id}">
+    return `<tr data-id="${u.id}" data-un="${esc(u.username)}">
+      <td>${mine ? "" : `<input type="checkbox" class="sel" />`}</td>
       <td><strong>${esc(u.username)}</strong>${twofa}</td><td>${esc(u.email)}</td>
-      <td>${esc(u.role)}</td><td>${badge(u.status)}</td>
+      <td>${esc(u.role)}</td><td>${badge(u.status)}</td><td>${tags || "—"}</td>
       <td class="muted">${u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"}</td>
       <td>${act}</td></tr>`;
   }
-  p.querySelectorAll("tr[data-id]").forEach((tr) => {
-    const id = tr.dataset.id;
-    const on = (sel, fn) => { const b = tr.querySelector(sel); if (b) b.onclick = fn; };
-    const refresh = () => adminView("Users");
-    on(".suspend", async () => { try { await api.suspend(id); toast("User kicked off", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
-    on(".reinstate", async () => { try { await api.reinstate(id); toast("Reinstated", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
-    on(".reset2fa", async () => { if (!confirm("Reset this user's 2FA? They'll re-enrol on next login.")) return; try { await api.reset2fa(id); toast("2FA reset", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
-    on(".resetpw", async () => {
-      if (!confirm("Reset this user's password to a temporary one?")) return;
-      try { const r = await api.resetPassword(id); window.prompt("Temporary password (relay securely; user must change it on next login):", r.temporary_password); refresh(); }
+  const selectedIds = () => [...p.querySelectorAll(".sel:checked")].map((c) => c.closest("tr").dataset.id);
+  function wire() {
+    const refresh = () => load();
+    let t;
+    p.querySelector("#uSearch").oninput = (e) => { _userQuery = e.target.value.trim(); clearTimeout(t); t = setTimeout(load, 300); };
+    p.querySelector("#nu_go").onclick = async () => {
+      try {
+        await api.createUser({
+          username: p.querySelector("#nu_un").value.trim().toLowerCase(),
+          email: p.querySelector("#nu_em").value.trim(),
+          full_name: p.querySelector("#nu_fn").value.trim(),
+          password: p.querySelector("#nu_pw").value,
+          role: p.querySelector("#nu_role").value,
+        });
+        toast("Account created", "ok"); refresh();
+      } catch (e) { toast(e.message, "bad"); }
+    };
+    const bar = () => {
+      const n = selectedIds().length;
+      p.querySelector("#bulkBar").innerHTML = n
+        ? `${n} selected — ${["approve", "suspend", "reinstate", "delete"].map((a) => `<a data-bulk="${a}" style="cursor:pointer">${a}</a>`).join(" · ")}`
+        : "";
+      p.querySelectorAll("#bulkBar [data-bulk]").forEach((a) => (a.onclick = () => bulk(a.dataset.bulk)));
+    };
+    async function bulk(action) {
+      const ids = selectedIds();
+      if (!ids.length) return;
+      if (action === "delete" && !confirm(`Delete ${ids.length} user(s)? This cannot be undone.`)) return;
+      try { const r = await api.bulkUsers(action, ids); toast(`${action}: ${r.done} done, ${r.skipped} skipped`, "ok"); refresh(); }
       catch (e) { toast(e.message, "bad"); }
+    }
+    const selAll = p.querySelector("#selAll");
+    if (selAll) selAll.onchange = () => { p.querySelectorAll(".sel").forEach((c) => (c.checked = selAll.checked)); bar(); };
+    p.querySelectorAll(".sel").forEach((c) => (c.onchange = bar));
+    p.querySelectorAll("tr[data-id]").forEach((tr) => {
+      const id = tr.dataset.id, un = tr.dataset.un;
+      const on = (s, f) => { const b = tr.querySelector(s); if (b) b.onclick = f; };
+      on(".suspend", async () => { try { await api.suspend(id); toast("Kicked", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
+      on(".reinstate", async () => { try { await api.reinstate(id); toast("Reinstated", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
+      on(".promote", async () => { try { await api.setRole(id, "admin"); toast("Now an admin", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
+      on(".demote", async () => { try { await api.setRole(id, "user"); toast("Demoted", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
+      on(".logs", () => showUserLogs(id, un));
+      on(".manage", () => showUserManage(id, un));
+      on(".reset2fa", async () => { if (!confirm("Reset 2FA?")) return; try { await api.reset2fa(id); toast("2FA reset", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
+      on(".resetpw", async () => { if (!confirm("Reset password?")) return; try { const r = await api.resetPassword(id); window.prompt("Temp password (relay securely):", r.temporary_password); refresh(); } catch (e) { toast(e.message, "bad"); } });
+      on(".del", async () => { if (!confirm("Permanently delete this user + their notebook?")) return; try { await api.deleteUser(id); toast("Deleted", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
     });
-    on(".del", async () => { if (!confirm("Permanently delete this user and their notebook? This cannot be undone.")) return; try { await api.deleteUser(id); toast("User deleted", "ok"); refresh(); } catch (e) { toast(e.message, "bad"); } });
+    bar();
+  }
+  await load();
+}
+
+async function showUserLogs(id, un) {
+  let rows = [];
+  try { rows = await api.userLogs(id); } catch (_) {}
+  view.innerHTML = `<div class="card"><h1>Activity — ${esc(un)}</h1>
+    <div class="btn-row"><button class="secondary" data-go="#/admin/users">Back to users</button></div>
+    <input id="ulSearch" placeholder="🔎 search…" />
+    <div id="ulTable">${logTable(rows, true)}</div></div>`;
+  view.querySelector("[data-go]").onclick = () => go("#/admin/users");
+  view.querySelector("#ulSearch").oninput = (e) => {
+    const f = e.target.value.toLowerCase();
+    view.querySelector("#ulTable").innerHTML = logTable(
+      rows.filter((a) => !f || `${a.action} ${a.target}`.toLowerCase().includes(f)), true);
+  };
+}
+
+async function showUserManage(id, un) {
+  let u = {};
+  try { u = await api.userUsage(id); } catch (_) {}
+  const exp = u.expires_at ? new Date(u.expires_at).toLocaleDateString() : "none";
+  view.innerHTML = `<div class="card"><h1>Manage — ${esc(un)}</h1>
+    <div class="btn-row"><button class="secondary" data-go="#/admin/users">Back to users</button></div>
+    <p class="muted">GPU-hours used: <strong>${(u.gpu_hours_used ?? 0).toFixed?.(1) ?? u.gpu_hours_used}</strong>
+       / limit: ${u.gpu_hours_limit ?? "unlimited"} · active notebooks: ${u.active_runs ?? 0} · expires: ${exp}</p>
+    <label>GPU-hours limit (blank = unlimited)</label>
+    <div class="btn-row"><input id="ql" type="number" min="0" placeholder="e.g. 40" style="max-width:160px" />
+      <button id="qSet" class="secondary">Set</button><button id="qClr" class="secondary">Unlimited</button></div>
+    <label>Account expiry (days from now)</label>
+    <div class="btn-row"><input id="ed" type="number" min="1" placeholder="e.g. 120" style="max-width:160px" />
+      <button id="eSet" class="secondary">Set</button><button id="eClr" class="secondary">Clear</button></div>
+    <label>Tags / groups (comma-separated)</label>
+    <div class="btn-row"><input id="tg" placeholder="${esc((u.tags || []).join(", "))}" />
+      <button id="tSet" class="secondary">Save tags</button></div></div>`;
+  view.querySelector("[data-go]").onclick = () => go("#/admin/users");
+  const wrap = (fn) => async () => { try { await fn(); toast("Updated", "ok"); showUserManage(id, un); } catch (e) { toast(e.message, "bad"); } };
+  view.querySelector("#qSet").onclick = wrap(() => api.setQuota(id, { gpu_hours_limit: parseFloat(view.querySelector("#ql").value) }));
+  view.querySelector("#qClr").onclick = wrap(() => api.setQuota(id, { clear: true }));
+  view.querySelector("#eSet").onclick = wrap(() => api.setExpiry(id, { days: parseInt(view.querySelector("#ed").value, 10) }));
+  view.querySelector("#eClr").onclick = wrap(() => api.setExpiry(id, { clear: true }));
+  view.querySelector("#tSet").onclick = wrap(() => api.setTags(id, view.querySelector("#tg").value.split(",").map((s) => s.trim()).filter(Boolean)));
+}
+
+async function renderInvites(p) {
+  const list = await api.invites();
+  p.innerHTML = `<div class="card">
+      <h2>Create invite code</h2>
+      <p class="muted">Users who register with the code are auto-approved (skip the queue).</p>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+        <select id="iv_role"><option value="user">user</option><option value="admin">admin</option></select>
+        <input id="iv_uses" type="number" min="1" value="1" placeholder="max uses" />
+        <input id="iv_days" type="number" min="1" placeholder="expires in days (optional)" />
+      </div>
+      <div class="btn-row"><button id="iv_go">Generate code</button></div>
+    </div>
+    <div class="card"><h2>Invite codes</h2>
+      ${list.length ? `<table><thead><tr><th>Code</th><th>Role</th><th>Uses</th><th>Active</th><th>Expires</th><th></th></tr></thead>
+      <tbody>${list.map((i) => `<tr data-code="${esc(i.code)}">
+        <td><code>${esc(i.code)}</code></td><td>${esc(i.role)}</td>
+        <td>${i.uses}/${i.max_uses}</td><td>${i.active ? badge("approved") : badge("suspended")}</td>
+        <td class="muted">${i.expires_at ? new Date(i.expires_at).toLocaleDateString() : "—"}</td>
+        <td>${i.active ? `<button class="danger revoke">Revoke</button>` : ""}</td></tr>`).join("")}</tbody></table>`
+        : `<p class="muted">No invite codes yet.</p>`}
+    </div>`;
+  p.querySelector("#iv_go").onclick = async () => {
+    try {
+      const days = parseInt(p.querySelector("#iv_days").value, 10);
+      const r = await api.createInvite({
+        role: p.querySelector("#iv_role").value,
+        max_uses: parseInt(p.querySelector("#iv_uses").value, 10) || 1,
+        ...(days ? { expires_in_days: days } : {}),
+      });
+      window.prompt("Invite code (share it):", r.code);
+      renderInvites(p);
+    } catch (e) { toast(e.message, "bad"); }
+  };
+  p.querySelectorAll("tr[data-code]").forEach((tr) => {
+    const b = tr.querySelector(".revoke");
+    if (b) b.onclick = async () => { try { await api.revokeInvite(tr.dataset.code); toast("Revoked", "ok"); renderInvites(p); } catch (e) { toast(e.message, "bad"); } };
   });
 }
 
@@ -619,15 +863,29 @@ function renderMonitoring(p) {
 }
 
 async function renderAudit(p) {
-  const list = await api.audit(200);
   p.innerHTML = `<div class="card"><h2>Audit log
     <button class="secondary" id="csv" style="float:right">⬇ Export CSV</button></h2>
-    <table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>IP</th></tr></thead>
-    <tbody>${list.map((a) => `<tr>
-      <td class="muted">${new Date(a.timestamp).toLocaleString()}</td>
-      <td>${esc(a.actor_label)}</td><td>${esc(a.action)}</td>
-      <td>${esc(a.target)}</td><td class="muted">${esc(a.ip)}</td></tr>`).join("")}
-    </tbody></table></div>`;
+    <p class="muted">Owner activity is never recorded.</p>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
+      <input id="a_q" placeholder="🔎 search actor/action/target" />
+      <input id="a_user" placeholder="actor username" />
+      <input id="a_action" placeholder="action prefix (e.g. admin.)" />
+    </div>
+    <div id="aTable"><p class="muted">Loading…</p></div></div>`;
+  let t;
+  async function load() {
+    const opts = {
+      q: p.querySelector("#a_q").value.trim(),
+      username: p.querySelector("#a_user").value.trim(),
+      action: p.querySelector("#a_action").value.trim(),
+    };
+    try {
+      const list = await api.audit(300, opts);
+      p.querySelector("#aTable").innerHTML = logTable(list, true);
+    } catch (e) { p.querySelector("#aTable").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  }
+  ["#a_q", "#a_user", "#a_action"].forEach((s) =>
+    (p.querySelector(s).oninput = () => { clearTimeout(t); t = setTimeout(load, 300); }));
   p.querySelector("#csv").onclick = async () => {
     try {
       const blob = await api.auditExport();
@@ -637,6 +895,7 @@ async function renderAudit(p) {
       URL.revokeObjectURL(url);
     } catch (e) { toast(e.message, "bad"); }
   };
+  await load();
 }
 
 // ------------------------------------------------------------------- router

@@ -125,6 +125,7 @@ export const api = {
   myBoost: () => request("GET", "/api/notebooks/boost/mine"),
   notifications: () => request("GET", "/api/notebooks/notifications"),
   readNotifications: () => request("POST", "/api/notebooks/notifications/read"),
+  myLogs: (q = "") => request("GET", `/api/auth/me/logs${q ? `?q=${encodeURIComponent(q)}` : ""}`),
 
   // admin
   stats: () => request("GET", "/api/admin/stats"),
@@ -145,7 +146,35 @@ export const api = {
   boosts: (status = "pending") => request("GET", `/api/admin/boosts?status=${status}`),
   approveBoost: (id, gpus) => request("POST", `/api/admin/boosts/${id}/approve`, gpus ? { gpus } : {}),
   denyBoost: (id, reason = "") => request("POST", `/api/admin/boosts/${id}/deny`, { reason }),
-  audit: (limit = 100) => request("GET", `/api/admin/audit?limit=${limit}`),
+  audit: (limit = 200, opts = {}) => {
+    const p = new URLSearchParams({ limit });
+    if (opts.q) p.set("q", opts.q);
+    if (opts.username) p.set("username", opts.username);
+    if (opts.action) p.set("action", opts.action);
+    return request("GET", `/api/admin/audit?${p.toString()}`);
+  },
+  userLogs: (user_id) => request("GET", `/api/admin/users/${user_id}/logs`),
+  userUsage: (user_id) => request("GET", `/api/admin/users/${user_id}/usage`),
+  usersSearch: (q = "", status) => {
+    const p = new URLSearchParams();
+    if (q) p.set("q", q);
+    if (status) p.set("status", status);
+    const s = p.toString();
+    return request("GET", `/api/admin/users${s ? `?${s}` : ""}`);
+  },
+  setRole: (user_id, role) => request("POST", `/api/admin/users/${user_id}/role`, { role }),
+  createUser: (p) => request("POST", "/api/admin/users", p),
+  bulkUsers: (action, user_ids) => request("POST", "/api/admin/users/bulk", { action, user_ids }),
+  setExpiry: (user_id, body) => request("POST", `/api/admin/users/${user_id}/expiry`, body),
+  setQuota: (user_id, body) => request("POST", `/api/admin/users/${user_id}/quota`, body),
+  setTags: (user_id, tags) => request("POST", `/api/admin/users/${user_id}/tags`, { tags }),
+  invites: () => request("GET", "/api/admin/invites"),
+  createInvite: (p) => request("POST", "/api/admin/invites", p),
+  revokeInvite: (code) => request("POST", `/api/admin/invites/${code}/revoke`),
+  attention: () => request("GET", "/api/admin/attention"),
+  announce: (message, kind = "info") => request("POST", "/api/admin/announce", { message, kind }),
+  getMaintenance: () => request("GET", "/api/admin/maintenance"),
+  setMaintenance: (on, message = "") => request("POST", "/api/admin/maintenance", { on, message }),
   auditVerify: () => request("GET", "/api/admin/audit/verify"),
   async auditExport() {
     const res = await fetch("/api/admin/audit/export.csv", {
