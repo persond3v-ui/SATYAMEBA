@@ -382,3 +382,31 @@ The all-in-one wizard (`setup/install_wizard.sh`) offers this as a step.
   so root on *that* node can read live data — protect-at-rest, not in-use.
 * Needs FUSE + `user_allow_other` (the setup script enables it). Validate the
   bind-mount-of-FUSE behaviour on your real hardware.
+
+## 19. Public access on your own domain over HTTPS
+
+No public IP or port-forwarding needed — a tunnel makes an *outbound* connection
+and serves your domain with a trusted cert.
+
+**Cloudflare Tunnel (recommended, free, your domain):**
+
+```bash
+sudo ./setup/public_domain.sh                 # prompts for the tunnel token
+sudo ./setup/public_domain.sh --token <TOK> --hostname notebooks.you.com --harden
+```
+
+It installs `cloudflared`, installs a boot service that forwards the HTTPS edge,
+and (with `--harden`) flips the stack to a **public-safe** posture
+(`SAT_ENVIRONMENT=production`, `SAT_REQUIRE_ADMIN_2FA=true`, adds the hostname to
+CORS) and redeploys. In token mode, finish in the Cloudflare dashboard: set the
+hostname → service `https://localhost:443` with **No TLS Verify ON**. The desktop
+**tkinter wizard** has a *"🌐 Expose on a domain (Cloudflare)"* button for the same.
+
+**Other options:** `tailscale funnel 443` (zero setup, `*.ts.net` host — you
+already have Tailscale); `setup/ngrok_setup.sh` (paid ngrok plan adds custom
+domains); or, if you ever *can* port-forward, `scripts/issue_cert.sh` issues a
+real Let's Encrypt cert directly on the edge for your own domain — no third party.
+
+> Going public shifts the threat model (this was built for a trusted VLAN). With
+> `--harden` on, also consider **Cloudflare Access (Zero Trust)** in front for an
+> SSO gate and **gVisor** (`SAT_SANDBOX_RUNTIME=runsc`) for untrusted users.

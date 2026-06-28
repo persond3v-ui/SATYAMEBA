@@ -28,7 +28,7 @@ from pathlib import Path
 
 try:
     import tkinter as tk
-    from tkinter import ttk, messagebox
+    from tkinter import ttk, messagebox, simpledialog
 except Exception:  # pragma: no cover
     sys.stderr.write(
         "tkinter is not available. Install it with:\n"
@@ -182,6 +182,8 @@ class SetupApp(tk.Tk):
         self.btn_docker_group.pack(side="left", padx=4)
         self.btn_scan = ttk.Button(btns, text="Scan storage & resources", command=self._scan_resources)
         self.btn_scan.pack(side="left", padx=4)
+        self.btn_public = ttk.Button(btns, text="🌐 Expose on a domain (Cloudflare)", command=self._public_domain)
+        self.btn_public.pack(side="left", padx=4)
 
         # Role / bootstrap
         role = ttk.LabelFrame(self, text=" Bootstrap this node ")
@@ -249,7 +251,7 @@ class SetupApp(tk.Tk):
                     self.statusvar.set(payload)
                 elif kind == "enable":
                     for b in (self.btn_check, self.btn_fix, self.btn_gpu, self.btn_boot,
-                              self.btn_docker_group, self.btn_scan):
+                              self.btn_docker_group, self.btn_scan, self.btn_public):
                         b.config(state="normal")
         except queue.Empty:
             pass
@@ -257,7 +259,7 @@ class SetupApp(tk.Tk):
 
     def _disable_buttons(self) -> None:
         for b in (self.btn_check, self.btn_fix, self.btn_gpu, self.btn_boot,
-                  self.btn_docker_group, self.btn_scan):
+                  self.btn_docker_group, self.btn_scan, self.btn_public):
             b.config(state="disabled")
 
     def _run(self, cmd: list[str]) -> int:
@@ -285,6 +287,40 @@ class SetupApp(tk.Tk):
             finally:
                 self.q.put(("enable", None))
         return inner
+
+    def _public_domain(self) -> None:
+        token = simpledialog.askstring(
+            "Expose on a domain — Cloudflare Tunnel",
+            "Paste your Cloudflare Tunnel TOKEN\n"
+            "(Cloudflare Zero Trust → Networks → Tunnels → create a tunnel →\n"
+            "'Install connector' shows a token). Leave blank to cancel.",
+            show="*", parent=self)
+        if not token or not token.strip():
+            self._logln("  (Cloudflare setup cancelled — no token)")
+            return
+        host = simpledialog.askstring(
+            "Public hostname (optional)",
+            "Public hostname for the site, e.g. notebooks.yourdomain.com\n"
+            "(optional — you can also set it in the Cloudflare dashboard).",
+            parent=self) or ""
+        self._pd_token = token.strip()
+        self._pd_host = host.strip()
+        self._thread(self._do_public_domain)
+
+    def _do_public_domain(self) -> None:
+        self.q.put(("statusbar", "Setting up Cloudflare Tunnel…"))
+        cmd = SUDO + ["bash", str(REPO_ROOT / "setup" / "public_domain.sh"),
+                      "--token", self._pd_token, "--harden"]
+        if self._pd_host:
+            cmd += ["--hostname", self._pd_host]
+        rc = self._run(cmd)
+        if rc == 0:
+            self._logln("  ✔ Cloudflare Tunnel installed as a boot service.")
+            self._logln("  → In the Cloudflare dashboard set the hostname → service")
+            self._logln("    https://localhost:443  with 'No TLS Verify' = ON.")
+        else:
+            self._logln(f"  ! public_domain.sh exited with code {rc} (see log above).")
+        self.q.put(("statusbar", "Cloudflare Tunnel step finished."))
 
     def _run_checks(self) -> None:
         self._thread(self._do_checks)
