@@ -46,6 +46,11 @@ New capability work, with honest residual limits:
   `gocryptfs.conf`. Protects data **at rest** (stolen/cold/decommissioned disk);
   **in-use** data on a running node is still plaintext to root. Needs FUSE +
   `user_allow_other`; **validate the bind-mount-of-FUSE on real hardware**.
+- **🟢 DB SPOF reduced further** — `docker-compose.pgbouncer.yml` adds connection
+  pooling (session mode, safe for SQLAlchemy) and `docker-compose.ha-db.yml` is a
+  repmgr+pgpool auto-failover example; `scripts/verify_db.sh` checks
+  connectivity/replication. Still **bring-your-own** replicated Postgres for full
+  HA (Patroni/CloudNativePG/managed via `external-db.yml`); validate failover.
 
 ## Second integration scan (new findings)
 

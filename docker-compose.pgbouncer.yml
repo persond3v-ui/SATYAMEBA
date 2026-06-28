@@ -1,0 +1,32 @@
+# Connection-pooling overlay: put PgBouncer in front of Postgres so many gateway
+# replicas + the Hub don't exhaust the database's connection slots under load.
+#
+#   compose: docker compose -f docker-compose.yml -f docker-compose.pgbouncer.yml up -d
+#   swarm:   docker stack deploy -c docker-compose.swarm.yml \
+#                                -c docker-compose.pgbouncer.yml satyameba
+#
+# Pool mode is **session** by default — the safe choice for SQLAlchemy + psycopg2
+# (transaction mode breaks server-side prepared statements / SET). Switch to
+# transaction mode only if you know your driver tolerates it.
+services:
+  pgbouncer:
+    image: edoburu/pgbouncer:1.21.0
+    environment:
+      DB_HOST: ${SAT_DB_HOST:-db}
+      DB_PORT: ${SAT_DB_PORT:-5432}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      POOL_MODE: ${SAT_PGBOUNCER_POOL_MODE:-session}
+      MAX_CLIENT_CONN: ${SAT_PGBOUNCER_MAX_CLIENT_CONN:-500}
+      DEFAULT_POOL_SIZE: ${SAT_PGBOUNCER_POOL_SIZE:-25}
+      AUTH_TYPE: ${SAT_PGBOUNCER_AUTH:-scram-sha-256}
+    networks: [satyameba_net]
+    expose: ["6432"]
+    depends_on: [db]
+    restart: unless-stopped
+
+  # Point the gateway at the pooler instead of the database directly.
+  gateway:
+    environment:
+      SAT_DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}"

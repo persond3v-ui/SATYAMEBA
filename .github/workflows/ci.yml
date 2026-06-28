@@ -88,3 +88,5 @@ jobs:
           openssl req -x509 -newkey rsa:2048 -nodes -keyout secrets/certs/satyameba.key \
             -out secrets/certs/satyameba.crt -days 1 -subj "/CN=localhost"
           docker compose config -q && echo "single-host compose OK"
+          docker compose -f docker-compose.yml -f docker-compose.pgbouncer.yml config -q \
+            && echo "pgbouncer overlay OK"

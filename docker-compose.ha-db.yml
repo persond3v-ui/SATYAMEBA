@@ -1,0 +1,75 @@
+# =============================================================================
+# HA database overlay (EXAMPLE) — a replicated Postgres with automatic failover,
+# so a single DB node dying no longer takes the whole platform down.
+#
+#   docker stack deploy -c docker-compose.swarm.yml \
+#                       -c docker-compose.ha-db.yml satyameba
+#
+# Topology: two bitnami `postgresql-repmgr` nodes (primary + standby, repmgr
+# handles promotion on failure) behind one `pgpool` endpoint that the gateway
+# talks to. Pgpool routes writes to the primary and survives a node loss.
+#
+# This is a STARTING TEMPLATE — pin the image tags you've tested, set strong
+# passwords in .env (REPMGR_PASSWORD, PGPOOL_ADMIN_PASSWORD), give the DB nodes
+# real volumes/placement, and validate failover on your hardware. For a managed
+# or Patroni/CloudNativePG cluster instead, use docker-compose.external-db.yml
+# and just point SAT_DATABASE_URL at it.
+# =============================================================================
+services:
+  # The bundled single-instance db is replaced by the repmgr pair below.
+  db:
+    deploy:
+      replicas: 0
+
+  pg-1:
+    image: bitnami/postgresql-repmgr:16
+    environment:
+      POSTGRESQL_USERNAME: ${POSTGRES_USER}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB}
+      REPMGR_PASSWORD: ${SAT_REPMGR_PASSWORD:-CHANGE_ME_repmgr}
+      REPMGR_PRIMARY_HOST: pg-1
+      REPMGR_PARTNER_NODES: pg-1,pg-2
+      REPMGR_NODE_NAME: pg-1
+      REPMGR_NODE_NETWORK_NAME: pg-1
+    volumes: [pg1data:/bitnami/postgresql]
+    networks: [satyameba_net]
+
+  pg-2:
+    image: bitnami/postgresql-repmgr:16
+    environment:
+      POSTGRESQL_USERNAME: ${POSTGRES_USER}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB}
+      REPMGR_PASSWORD: ${SAT_REPMGR_PASSWORD:-CHANGE_ME_repmgr}
+      REPMGR_PRIMARY_HOST: pg-1
+      REPMGR_PARTNER_NODES: pg-1,pg-2
+      REPMGR_NODE_NAME: pg-2
+      REPMGR_NODE_NETWORK_NAME: pg-2
+    volumes: [pg2data:/bitnami/postgresql]
+    networks: [satyameba_net]
+    depends_on: [pg-1]
+
+  pgpool:
+    image: bitnami/pgpool:4
+    environment:
+      PGPOOL_BACKEND_NODES: 0:pg-1:5432,1:pg-2:5432
+      PGPOOL_SR_CHECK_USER: ${POSTGRES_USER}
+      PGPOOL_SR_CHECK_PASSWORD: ${POSTGRES_PASSWORD}
+      PGPOOL_POSTGRES_USERNAME: ${POSTGRES_USER}
+      PGPOOL_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGPOOL_ADMIN_USERNAME: ${SAT_PGPOOL_ADMIN_USER:-pgpooladmin}
+      PGPOOL_ADMIN_PASSWORD: ${SAT_PGPOOL_ADMIN_PASSWORD:-CHANGE_ME_pgpool}
+      PGPOOL_ENABLE_LOAD_BALANCING: "no"
+    networks: [satyameba_net]
+    expose: ["5432"]
+    depends_on: [pg-1, pg-2]
+
+  # The gateway talks to pgpool, which always points at the live primary.
+  gateway:
+    environment:
+      SAT_DATABASE_URL: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgpool:5432/${POSTGRES_DB}"
+
+volumes:
+  pg1data:
+  pg2data:

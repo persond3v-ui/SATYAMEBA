@@ -186,15 +186,28 @@ A single manager keeps the DB/edge as a single point of failure. To harden:
    ./scripts/promote_managers.sh worker2 worker3   # run on the master
    ```
    Swarm tolerates one manager loss with three managers (use an odd count).
-2. **Replicate Postgres** and point `SAT_DATABASE_URL` at it, then deploy with
-   the external-db overlay so the bundled db carries no tasks:
+2. **Connection pooling (PgBouncer).** Even with one DB, put PgBouncer in front
+   so many gateway replicas + the Hub don't exhaust its connection slots:
    ```bash
-   docker stack deploy -c docker-compose.swarm.yml \
-                       -c docker-compose.external-db.yml satyameba
+   docker compose -f docker-compose.yml -f docker-compose.pgbouncer.yml up -d
+   # swarm: add -c docker-compose.pgbouncer.yml to the stack deploy
    ```
-   Bring your own HA Postgres (Patroni / CloudNativePG / managed) — intentionally
-   not auto-provisioned.
-3. **Edge entry point:** run the edge on each manager and use round-robin DNS or a
+   It repoints the gateway at `pgbouncer:6432` in **session** mode (safe for
+   SQLAlchemy). Verify with `./scripts/verify_db.sh`.
+3. **Replicate Postgres (remove the DB SPOF).** Two ways:
+   * **Bring your own** managed / Patroni / CloudNativePG cluster — point
+     `SAT_DATABASE_URL` at it and deploy with `docker-compose.external-db.yml`
+     (the bundled db then carries no tasks).
+   * **Use the example overlay** `docker-compose.ha-db.yml` — two
+     `postgresql-repmgr` nodes (auto-failover) behind `pgpool`:
+     ```bash
+     docker stack deploy -c docker-compose.swarm.yml \
+                         -c docker-compose.ha-db.yml satyameba
+     ```
+     Set `SAT_REPMGR_PASSWORD` / `SAT_PGPOOL_ADMIN_PASSWORD` first; pin the image
+     tags you've tested; then `./scripts/verify_db.sh` shows both nodes + the
+     primary. **Validate failover on your hardware before relying on it.**
+4. **Edge entry point:** run the edge on each manager and use round-robin DNS or a
    keepalived VIP so clients fail over.
 
 ## 12. Owner break-glass, anti-tamper & physical hardening
