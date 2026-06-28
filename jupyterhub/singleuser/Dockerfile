@@ -13,12 +13,20 @@ ARG SAT_GPU_BUILD=false
 # every node — including older GPUs that aren't an RTX 5070. The cluster wizard
 # computes this from the OLDEST driver across the cluster.
 ARG SAT_TORCH_INDEX=cu121
+# Frameworks: PyTorch is on by default for GPU builds; set SAT_TF_BUILD=true to
+# also bake in TensorFlow (with CUDA). Either way users can `pip install --user`
+# anything else into their persistent /work.
+ARG SAT_TF_BUILD=false
 RUN pip install --no-cache-dir \
         pandas numpy scipy matplotlib seaborn scikit-learn \
         ipywidgets jupyterlab plotly \
         jupyter-resource-usage jupyterlab-nvdashboard && \
     if [ "$SAT_GPU_BUILD" = "true" ]; then \
         pip install --no-cache-dir torch --index-url "https://download.pytorch.org/whl/${SAT_TORCH_INDEX}" ; \
+    fi && \
+    if [ "$SAT_TF_BUILD" = "true" ]; then \
+        if [ "$SAT_GPU_BUILD" = "true" ]; then pip install --no-cache-dir "tensorflow[and-cuda]" ; \
+        else pip install --no-cache-dir tensorflow-cpu ; fi ; \
     fi
 
 # --- SATYAMEBA notebook experience -----------------------------------------

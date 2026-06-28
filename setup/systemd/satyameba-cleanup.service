@@ -1,0 +1,8 @@
+[Unit]
+Description=SATYAMEBA periodic cleanup (reclaim disk after users finish)
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=__ROOT__
+ExecStart=/usr/bin/env bash __ROOT__/scripts/cleanup.sh

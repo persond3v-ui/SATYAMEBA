@@ -51,6 +51,12 @@ systemctl daemon-reload
 systemctl enable satyameba.service
 say "Enabled. Start now with: sudo systemctl start satyameba"
 
+say "Installing the periodic cleanup timer (reclaims disk every 6h)…"
+gen "$ROOT/setup/systemd/satyameba-cleanup.service" /etc/systemd/system/satyameba-cleanup.service
+gen "$ROOT/setup/systemd/satyameba-cleanup.timer"   /etc/systemd/system/satyameba-cleanup.timer
+systemctl daemon-reload
+systemctl enable --now satyameba-cleanup.timer 2>/dev/null || true
+
 if [[ "$TUI" -eq 1 ]]; then
   say "Installing satyameba-tui.service on tty1…"
   gen "$ROOT/setup/systemd/satyameba-tui.service" /etc/systemd/system/satyameba-tui.service

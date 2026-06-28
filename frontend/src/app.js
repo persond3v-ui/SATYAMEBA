@@ -39,12 +39,28 @@ function logTable(rows, withActor = false) {
   return `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 
+const THEMES = ["neon", "light", "lite"];
+function applyTheme(t) { document.body.dataset.theme = t; localStorage.setItem("sat_theme", t); }
+function cycleTheme() {
+  const cur = localStorage.getItem("sat_theme") || "neon";
+  const next = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length];
+  applyTheme(next); renderNav(); toast(`Theme: ${next}${next === "lite" ? " (low-end mode)" : ""}`);
+}
+function themeChip() {
+  const t = localStorage.getItem("sat_theme") || "neon";
+  return `<a id="themeBtn" title="Theme: ${t} — click to switch (neon → light → lite)">🎨</a>`;
+}
+
 function renderNav() {
-  if (!me) { nav.innerHTML = `<a data-go="#/login">Sign in</a><a data-go="#/register">Register</a>`; return; }
+  if (!me) {
+    nav.innerHTML = `<a data-go="#/login">Sign in</a><a data-go="#/register">Register</a>${themeChip()}`;
+    const t0 = nav.querySelector("#themeBtn"); if (t0) t0.onclick = cycleTheme;
+    return;
+  }
   const adminLink = isAdmin(me) ? `<a data-go="#/admin">Admin</a>` : "";
   const unread = notifCache.filter((n) => !n.read).length;
   const bell = `<a id="bell" class="bell" title="Notifications">🔔${unread ? `<span class="count">${unread}</span>` : ""}</a>`;
-  nav.innerHTML = `<a data-go="#/app">Workspace</a>${adminLink}${bell}<a id="logout">Logout (${esc(me.username)})</a>`;
+  nav.innerHTML = `<a data-go="#/app">Workspace</a>${adminLink}<a data-go="#/tutorial">Tutorial</a>${themeChip()}${bell}<a id="logout">Logout (${esc(me.username)})</a>`;
   nav.querySelector("#logout").onclick = async () => {
     stopNotifPoll();
     try { await api.logout(); } catch (_) {}
@@ -52,6 +68,8 @@ function renderNav() {
   };
   const b = nav.querySelector("#bell");
   if (b) b.onclick = () => go("#/notifications");
+  const tb = nav.querySelector("#themeBtn");
+  if (tb) tb.onclick = cycleTheme;
 }
 
 // ---- in-app notifications (toasts + bell) ---------------------------------
@@ -898,6 +916,20 @@ async function renderAudit(p) {
   await load();
 }
 
+function renderTutorial() {
+  const vid = (src, title, desc) => `<div class="card"><h2>${esc(title)}</h2>
+    <p class="muted">${esc(desc)}</p>
+    <video controls preload="metadata" style="width:100%;border-radius:10px;background:#000"
+      onerror="this.style.display='none';this.parentElement.querySelector('.vfallback').style.display='block'">
+      <source src="${src}" type="video/mp4"></video>
+    <p class="muted vfallback" style="display:none">🎬 Not generated yet — run
+      <code>tutorial/render.sh</code> on a machine with manim + ffmpeg to create it.</p></div>`;
+  view.innerHTML = `<h1>Tutorials</h1>
+    <p class="muted">Short animated walk-throughs. Pick the neon/light/lite theme with 🎨 in the top bar.</p>
+    ${vid("/tutorial/user.mp4", "Your first notebook (users)", "Register → launch → train → download your model.")}
+    ${isAdmin(me) ? vid("/tutorial/admin.mp4", "Admin & cluster setup", "Approvals, GPU boosts, nodes, maintenance.") : ""}`;
+}
+
 // ------------------------------------------------------------------- router
 async function bootstrapMe() {
   if (api.isAuthed() && !me) {
@@ -920,6 +952,7 @@ async function route() {
   if (me.must_change_password) return forcedChangeView();
 
   if (hash.startsWith("#/notifications")) return showNotifications();
+  if (hash.startsWith("#/tutorial")) return renderTutorial();
 
   if (hash.startsWith("#/admin")) {
     if (!isAdmin(me)) return go("#/app");

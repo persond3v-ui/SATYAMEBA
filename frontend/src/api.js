@@ -56,7 +56,24 @@ async function signedHeaders(method, path, bodyString) {
   return { "X-SAT-Timestamp": ts, "X-SAT-Nonce": n, "X-SAT-Signature": sig };
 }
 
+// Low-bandwidth loading indicator: a top bar shows while any request is in flight.
+let _inflight = 0;
+function _load(delta) {
+  _inflight = Math.max(0, _inflight + delta);
+  const el = typeof document !== "undefined" && document.getElementById("loadbar");
+  if (el) el.className = _inflight > 0 ? "on" : "";
+}
+
 async function request(method, path, body, _retried) {
+  _load(1);
+  try {
+    return await _request(method, path, body, _retried);
+  } finally {
+    _load(-1);
+  }
+}
+
+async function _request(method, path, body, _retried) {
   const bodyString = body === undefined ? undefined : JSON.stringify(body);
   const headers = {
     Accept: "application/json",

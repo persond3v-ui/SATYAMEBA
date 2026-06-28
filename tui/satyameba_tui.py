@@ -25,7 +25,9 @@ from __future__ import annotations
 import curses
 import json
 import os
+import shutil
 import ssl
+import subprocess
 import time
 import urllib.request
 
@@ -166,8 +168,34 @@ def main(stdscr):
         time.sleep(0.1)
 
 
+def _display_manager():
+    """The active desktop's display-manager unit, if any (root + systemd only)."""
+    if os.geteuid() != 0 or not shutil.which("systemctl"):
+        return None
+    for dm in ("display-manager", "gdm", "gdm3", "sddm", "lightdm", "lxdm"):
+        if subprocess.run(["systemctl", "is-active", "--quiet", dm]).returncode == 0:
+            return dm
+    return None
+
+
+def _set_dm(dm, action):
+    try:
+        subprocess.run(["systemctl", action, dm], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    # With SAT_TUI_MANAGE_DE=1 (as root), stop the desktop while the dashboard is
+    # up — frees GPU/RAM — and bring it back the moment you quit the TUI.
+    _dm = _display_manager() if os.environ.get("SAT_TUI_MANAGE_DE", "0") == "1" else None
+    if _dm:
+        _set_dm(_dm, "stop")
     try:
         curses.wrapper(main)
     except KeyboardInterrupt:
         pass
+    finally:
+        if _dm:
+            _set_dm(_dm, "start")

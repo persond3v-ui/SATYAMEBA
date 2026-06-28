@@ -20,6 +20,33 @@
   --grad: linear-gradient(120deg, var(--accent), var(--magenta), var(--accent-2), var(--accent));
 }
 
+/* ---- Low-bandwidth top loading bar --------------------------------------- */
+#loadbar {
+  position: fixed; top: 0; left: 0; height: 3px; width: 0; z-index: 100;
+  background: var(--grad); background-size: 300% 100%;
+  opacity: 0; transition: width .3s ease, opacity .3s ease;
+}
+#loadbar.on { width: 92%; opacity: 1; animation: sat-flow 2s linear infinite; }
+
+/* ---- Theme variants ------------------------------------------------------ */
+body[data-theme="light"] {
+  --bg: #f5f7fc; --bg-2: #eef1f9; --panel: #ffffff; --panel-2: #f1f4fb;
+  --border: #d6dcea; --text: #18223c; --muted: #5b6580;
+  background: radial-gradient(1100px 700px at 85% -15%, #e8edff 0%, var(--bg) 60%);
+}
+body[data-theme="light"]::before { opacity: .07; }
+body[data-theme="light"] .topbar { background: linear-gradient(180deg, #ffffff, #f3f6fd); }
+
+/* Lite: low-end machines — no aurora, no animations, flat borders, cheap. */
+body[data-theme="lite"]::before { display: none; }
+body[data-theme="lite"] *, body[data-theme="lite"] *::before, body[data-theme="lite"] *::after { animation: none !important; }
+body[data-theme="lite"] .card::before { background: var(--border); opacity: .7; }
+body[data-theme="lite"] .card:hover { transform: none; box-shadow: none; }
+body[data-theme="lite"] .stat .n, body[data-theme="lite"] .brand {
+  -webkit-text-fill-color: var(--text); background: none; color: var(--text);
+}
+body[data-theme="lite"] button { background: var(--accent-2); }
+
 @keyframes sat-flow { 0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; } }
 @keyframes sat-pulse { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
 @keyframes sat-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -46,6 +73,8 @@ body::before {
 @media (max-width: 640px) {
   .nav { flex-wrap: wrap; gap: 4px; } .nav a { margin-left: 10px; }
   .view { padding: 18px 12px; } table { font-size: .8rem; }
+  .card table { display: block; overflow-x: auto; white-space: nowrap; }
+  .topbar { flex-wrap: wrap; gap: 8px; } .btn-row { gap: 6px; }
 }
 
 .topbar {
