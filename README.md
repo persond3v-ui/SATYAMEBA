@@ -82,9 +82,11 @@ plug-n-play.
 - **In-app notifications** — sharing started, boost approved/denied, node freed.
 
 ### 🖥️ Headless & one-button setup
-- **One-button TUI wizard** (`setup/wizard.sh`) — deps → Docker → secrets → scan →
-  bring-up → GPU/multi-node/services, over SSH or console, **any resolution**, on
-  **any distro** (apt/dnf/yum/pacman/zypper/apk).
+- **All-in-one installer** (`setup/install_wizard.sh`) — a real setup-program feel:
+  input fields, then a **live progress bar** running the whole pipeline in order
+  (deps → driver/toolkit → backend → boot services → desktop-slim/TUI → verify →
+  owner break-glass). Over SSH or console, **any resolution**, on **any distro**
+  (apt/dnf/yum/pacman/zypper/apk). `--unattended` / `--dry-run` supported.
 - **Uninstall the desktop to save RAM** (reversible) and run a **neon curses
   dashboard** on the monitors showing per-node health + active users.
 - **Boot services** — the whole stack starts on power-on via systemd; failproof.

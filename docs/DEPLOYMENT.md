@@ -17,18 +17,27 @@ then confirms `docker run --gpus all … nvidia-smi` works.
 > install, the Debian-stable driver is too old — install a 555+ driver from
 > NVIDIA's CUDA apt repo, reboot, and re-run **Verify GPU**.
 
-## 0.5 One-button TUI wizard (no desktop needed)
+## 0.5 All-in-one installer wizard (recommended)
 
-For a headless box or over SSH, run the single wizard that does everything step
-by step (deps → Docker → secrets → scan → bring-up → GPU/multi-node/services):
+The flagship one-shot installer collects your settings in input fields, then runs
+**the whole pipeline in order with a live progress bar**, like a normal setup
+program:
 
 ```bash
-sudo ./setup/wizard.sh
+sudo ./setup/install_wizard.sh
 ```
 
-It uses `whiptail`/`dialog` (falling back to plain prompts), works at **any
-resolution**, and on any distro (apt/dnf/yum/pacman/zypper/apk via
-`scripts/lib_pkg.sh`). Pick **Single host** for the one-shot bring-up.
+Order: dependencies → NVIDIA driver/toolkit → backend (secrets, resource scan,
+build images, bring-up) → boot services → optional desktop-slim + console TUI →
+verify → **owner break-glass** (ownership / Tailscale / tamper watchdog, run last
+because Tailscale login is interactive). Each step is an existing, tested script;
+everything is logged; a failure stops with a clear message and is idempotent to
+re-run. Flags: `--unattended` (defaults/env, no prompts), `--dry-run` (preview,
+change nothing), `--verbose` (stream output instead of the bar).
+
+It uses `dialog` → `whiptail` → plain prompts, works at **any resolution**, on any
+distro (apt/dnf/yum/pacman/zypper/apk). `setup/wizard.sh` remains as a lighter
+menu for one-off actions (join a worker, slim the desktop, etc.).
 
 ## 1. Single machine (quickest)
 
