@@ -35,7 +35,11 @@ in Docker (backend, frontend, db, hub, monitoring, and the notebooks themselves)
   Tailscale tailnet (a separate wizard); admin **drain/maintenance mode** per node.
 - **Headless option**: uninstall the desktop to save RAM (reversible) and run a
   **curses console dashboard** (any resolution) on the monitors; everything as
-  **systemd boot services**; a **one-button TUI setup wizard** (`setup/wizard.sh`).
+  **systemd boot services**; a **one-button TUI setup wizard** (`setup/wizard.sh`)
+  and an **all-in-one installer** (`setup/install_wizard.sh`).
+- **Alembic-managed schema**: the gateway auto-migrates at startup
+  (multi-replica-safe), adopts a pre-Alembic DB, and CI guards against drift —
+  safe in-place upgrades, no `create_all` blindness (`scripts/migrate.sh`).
 
 ## Resource profiles (per notebook)
 

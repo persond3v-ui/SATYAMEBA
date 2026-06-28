@@ -18,6 +18,26 @@ jobs:
       - name: Run gateway test suite
         run: pytest gateway/tests -q
 
+  migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install gateway deps
+        run: pip install -r gateway/requirements.txt
+      - name: Build schema from migrations, then assert no model drift
+        working-directory: gateway
+        env:
+          SAT_DATABASE_URL: "sqlite+pysqlite:////tmp/ci_migrate.db"
+          SAT_JWT_ALGORITHM: HS256
+          SAT_JWT_SECRET: "ci_secret_ci_secret_ci_secret_ci_secret_48xx"
+        run: |
+          alembic upgrade head
+          # Fails the build if models.py changed without a matching migration.
+          alembic check
+
   client-signing-parity:
     runs-on: ubuntu-latest
     steps:

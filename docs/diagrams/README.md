@@ -84,7 +84,7 @@ security path called out.
 | **F1** | New `owner` enum value missing on **existing** Postgres DBs (create_all can't migrate). | 🔴→✅ | **Fixed** — startup `ALTER TYPE … ADD VALUE IF NOT EXISTS`. |
 | **F2** | Watchdog re-sealed/alerted every 2-min tick (spam + repeated stack-down). | 🟠→✅ | **Fixed** — seal/alert once per tamper transition. |
 | **N9** | Two gateway replicas race on first-run bootstrap-admin insert. | 🟡 | ✅ Fixed — `IntegrityError` is caught. |
-| **N10** | Schema changes rely on `create_all`; **upgrading an existing DB misses new columns** (no Alembic). | 🟠 | 📌 Open — needs Alembic or documented manual DDL. |
+| **N10** | Schema changes relied on `create_all`; upgrading an existing DB missed new columns. | 🟠→✅ | **Fixed** — Alembic migrations run at startup; CI `alembic check` guards drift. |
 | **N13** | SPA logout ends the SPA session but not the Hub cookie/notebook in the other tab (suspend/delete do). | 🟡 | 📌 Open — minor. |
 | **N5** | nginx variable `proxy_pass` + dynamic resolver can't be CI-tested. | 🟡 | ⚠ Verify with `nginx -t` / smoke test on first real deploy. |
 | **N16** | Rightmost-XFF assumes exactly one trusted proxy (the edge). | ⚪ | Assumption — documented; revisit if an external LB is added. |

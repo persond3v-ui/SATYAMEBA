@@ -304,3 +304,24 @@ sudo ./setup/reinstall_desktop.sh                       # undo any time
   resolution, reading `/etc/satyameba/node.env`.
 * Default uninstall just switches the boot target to console (instant RAM win,
   fully reversible); `--purge` removes the autodetected DE on any distro.
+
+## 17. Database migrations (Alembic — automatic)
+
+The schema is **Alembic-managed**, so upgrades never lose or skip changes:
+
+* The gateway runs `alembic upgrade head` **at startup** — nothing to do on a
+  normal deploy. It's idempotent and **multi-replica-safe** (a Postgres advisory
+  lock serializes replicas).
+* A pre-Alembic database (one built by the old `create_all`) is **adopted**
+  automatically: missing tables are created, then it's stamped at head.
+* When you change `gateway/app/models.py`, generate a migration and commit it:
+
+  ```bash
+  ./scripts/migrate.sh revision --autogenerate -m "add quota column"   # review it!
+  ./scripts/migrate.sh                # upgrade to head (or just restart the gateway)
+  ./scripts/migrate.sh current        # what revision is the DB on?
+  ./scripts/migrate.sh downgrade -1   # roll back one
+  ```
+
+  CI runs `alembic check` — if you change a model without a migration, the build
+  fails, so the schema and the code can't silently drift apart.

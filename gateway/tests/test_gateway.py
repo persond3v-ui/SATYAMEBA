@@ -275,6 +275,22 @@ def test_audit_csv_export(client, admin):
     assert r.text.splitlines()[0] == "id,timestamp,actor,action,target,ip,detail"
 
 
+def test_schema_is_migration_managed(client):
+    """The app builds its schema via Alembic at startup (not bare create_all),
+    so the version table must exist and the feature tables must be present."""
+    from sqlalchemy import inspect, text
+
+    from app.database import engine
+
+    insp = inspect(engine)
+    assert insp.has_table("alembic_version")
+    with engine.connect() as c:
+        rev = c.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+    assert rev  # parked at a real revision
+    for t in ("users", "gpu_boost_requests", "notebook_runs", "notifications"):
+        assert insp.has_table(t), f"missing table {t}"
+
+
 def test_metrics_endpoint(client):
     client.get("/healthz")
     assert "satyameba_http_requests_total" in client.get("/metrics").text

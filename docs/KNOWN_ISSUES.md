@@ -65,8 +65,11 @@ how the modules integrate:
 - **⚠ Honest limits** — running notebooks/processes always need plaintext (root
   on a node can read live data/code); physical tamper needs LUKS/BIOS/TPM/locked
   rack; auto-wipe is armed+grace-gated and needs student-consent disclosure.
-- **N10 🟠 Open** — schema changes use `create_all`; upgrading an **existing** DB
-  misses new columns. Needs Alembic migrations (or documented manual DDL).
+- **N10 ✅ Fixed** — schema is now **Alembic-managed**. The gateway runs
+  `alembic upgrade head` at startup (multi-replica-safe via a Postgres advisory
+  lock), adopts a pre-Alembic DB by creating any missing tables + `stamp head`,
+  and CI runs `alembic check` so changing `models.py` without a matching
+  migration fails the build. Manual control via `scripts/migrate.sh`.
 - **N13 🟡 Open** — SPA logout doesn't end the Hub session in the other tab
   (suspend/delete do). Minor.
 - **N5 / N16 / N8 ⚠ Notes** — verify the nginx variable-`proxy_pass`/resolver
