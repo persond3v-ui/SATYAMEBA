@@ -119,6 +119,12 @@ export const api = {
   launch: (profile = "medium") => request("POST", "/api/notebooks/launch", { profile }),
   stopNotebook: () => request("POST", "/api/notebooks/stop"),
   notebookStatus: () => request("GET", "/api/notebooks/status"),
+  cluster: () => request("GET", "/api/notebooks/cluster"),
+  resources: () => request("GET", "/api/notebooks/resources"),
+  requestBoost: (gpus, reason) => request("POST", "/api/notebooks/boost/request", { gpus, reason }),
+  myBoost: () => request("GET", "/api/notebooks/boost/mine"),
+  notifications: () => request("GET", "/api/notebooks/notifications"),
+  readNotifications: () => request("POST", "/api/notebooks/notifications/read"),
 
   // admin
   stats: () => request("GET", "/api/admin/stats"),
@@ -132,8 +138,20 @@ export const api = {
   resetPassword: (user_id) => request("POST", `/api/admin/users/${user_id}/reset-password`),
   deleteUser: (user_id) => request("DELETE", `/api/admin/users/${user_id}`),
   nodes: () => request("GET", "/api/admin/nodes"),
+  drainNode: (id) => request("POST", `/api/admin/nodes/${id}/drain`),
+  activateNode: (id) => request("POST", `/api/admin/nodes/${id}/activate`),
   metricsLive: () => request("GET", "/api/admin/metrics/live"),
   activeSessions: () => request("GET", "/api/admin/sessions/active"),
+  boosts: (status = "pending") => request("GET", `/api/admin/boosts?status=${status}`),
+  approveBoost: (id, gpus) => request("POST", `/api/admin/boosts/${id}/approve`, gpus ? { gpus } : {}),
+  denyBoost: (id, reason = "") => request("POST", `/api/admin/boosts/${id}/deny`, { reason }),
   audit: (limit = 100) => request("GET", `/api/admin/audit?limit=${limit}`),
   auditVerify: () => request("GET", "/api/admin/audit/verify"),
+  async auditExport() {
+    const res = await fetch("/api/admin/audit/export.csv", {
+      headers: store.access ? { Authorization: `Bearer ${store.access}` } : {},
+    });
+    if (!res.ok) throw new Error(`Export failed (${res.status})`);
+    return res.blob();
+  },
 };

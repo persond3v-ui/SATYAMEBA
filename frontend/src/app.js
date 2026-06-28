@@ -7,8 +7,16 @@ const toastEl = document.getElementById("toast");
 
 let me = null; // current user
 let liveTimer = null; // admin live-metrics poller
+let wsTimer = null; // workspace cluster/resource poller
+let notifTimer = null; // notifications poller
+let notifCache = []; // last fetched notifications
 
 const GRAFANA_URL = window.SAT_GRAFANA_URL || "/grafana/";
+const isAdmin = (u) => !!u && (u.role === "admin" || u.role === "owner");
+function clearTimers() {
+  [liveTimer, wsTimer].forEach((t) => t && clearInterval(t));
+  liveTimer = null; wsTimer = null;
+}
 
 function toast(msg, kind = "") {
   toastEl.textContent = msg;
@@ -22,11 +30,50 @@ const go = (hash) => (location.hash = hash);
 
 function renderNav() {
   if (!me) { nav.innerHTML = `<a data-go="#/login">Sign in</a><a data-go="#/register">Register</a>`; return; }
-  const adminLink = me.role === "admin" ? `<a data-go="#/admin">Admin</a>` : "";
-  nav.innerHTML = `<a data-go="#/app">Workspace</a>${adminLink}<a id="logout">Logout (${esc(me.username)})</a>`;
+  const adminLink = isAdmin(me) ? `<a data-go="#/admin">Admin</a>` : "";
+  const unread = notifCache.filter((n) => !n.read).length;
+  const bell = `<a id="bell" class="bell" title="Notifications">🔔${unread ? `<span class="count">${unread}</span>` : ""}</a>`;
+  nav.innerHTML = `<a data-go="#/app">Workspace</a>${adminLink}${bell}<a id="logout">Logout (${esc(me.username)})</a>`;
   nav.querySelector("#logout").onclick = async () => {
+    stopNotifPoll();
     try { await api.logout(); } catch (_) {}
     api.clear(); me = null; go("#/login");
+  };
+  const b = nav.querySelector("#bell");
+  if (b) b.onclick = () => go("#/notifications");
+}
+
+// ---- in-app notifications (toasts + bell) ---------------------------------
+async function pollNotifications() {
+  if (!me) return;
+  try {
+    const list = await api.notifications();
+    const prevUnread = new Set(notifCache.filter((n) => !n.read).map((n) => n.id));
+    notifCache = list;
+    // Toast anything newly-arrived & unread since last poll.
+    const fresh = list.filter((n) => !n.read && !prevUnread.has(n.id));
+    if (fresh.length) toast(fresh[0].message, fresh[0].kind === "warning" ? "bad" : "ok");
+    renderNav();
+  } catch (_) {}
+}
+function startNotifPoll() {
+  if (notifTimer) return;
+  pollNotifications();
+  notifTimer = setInterval(pollNotifications, 12000);
+}
+function stopNotifPoll() { if (notifTimer) clearInterval(notifTimer); notifTimer = null; notifCache = []; }
+async function showNotifications() {
+  view.innerHTML = `<div class="card"><h1>Notifications</h1>
+    <div class="btn-row"><button class="secondary" id="markread">Mark all read</button>
+      <button class="secondary" data-go="#/app">Back</button></div>
+    <div class="notif-list" id="nl">${
+      notifCache.length ? notifCache.map((n) => `<div class="notif ${n.read ? "read" : "unread"}">
+        <span class="k ${esc(n.kind)}">${esc(n.kind)}</span>${esc(n.message)}
+        <div class="hint">${new Date(n.created_at).toLocaleString()}</div></div>`).join("")
+      : `<p class="muted">No notifications yet.</p>`}</div></div>`;
+  view.querySelector("[data-go]").onclick = () => go("#/app");
+  view.querySelector("#markread").onclick = async () => {
+    try { await api.readNotifications(); await pollNotifications(); showNotifications(); } catch (_) {}
   };
 }
 
@@ -70,7 +117,7 @@ async function doLogin() {
     api.saveTokens(t);
     me = await api.me();
     renderNav();
-    go(me.role === "admin" ? "#/admin" : "#/app");
+    go(isAdmin(me) ? "#/admin" : "#/app");
   } catch (e) {
     if (e.message === "otp_required") {
       view.querySelector("#otpRow").classList.remove("hidden");
@@ -128,7 +175,7 @@ function forcedChangeView() {
       await api.changePassword(view.querySelector("#op").value, view.querySelector("#np").value);
       toast("Password updated", "ok");
       me = await api.me();
-      go(me.role === "admin" ? "#/admin" : "#/app");
+      go(isAdmin(me) ? "#/admin" : "#/app");
     } catch (e) { err.textContent = e.message; }
   };
 }
@@ -158,6 +205,36 @@ async function workspaceView() {
       <p class="hint" id="state"></p>
     </div>
 
+    <div class="card" id="clusterCard">
+      <h2>Live cluster & resources <span class="nodelight"><span class="dot idle" id="cl-dot"></span>
+        <span id="cl-status" class="muted">checking…</span></span></h2>
+      <p class="muted" id="cl-summary">Each user gets a whole node while the cluster is quiet; when it
+         fills up you share a node's GPU concurrently — both jobs keep running.</p>
+      <div class="meters">
+        <div class="meter"><div class="mlabel"><span><span class="icon">🎮</span>GPU</span><b id="m-gpu">—</b></div>
+          <div class="bar"><div class="fill" id="f-gpu"></div></div></div>
+        <div class="meter"><div class="mlabel"><span><span class="icon">🧠</span>VRAM</span><b id="m-vram">—</b></div>
+          <div class="bar"><div class="fill" id="f-vram"></div></div></div>
+        <div class="meter"><div class="mlabel"><span><span class="icon">📊</span>RAM</span><b id="m-ram">—</b></div>
+          <div class="bar"><div class="fill" id="f-ram"></div></div></div>
+        <div class="meter"><div class="mlabel"><span><span class="icon">⚙️</span>CPU</span><b id="m-cpu">—</b></div>
+          <div class="bar"><div class="fill" id="f-cpu"></div></div></div>
+      </div>
+      <div class="nodechips" id="cl-nodes"></div>
+    </div>
+
+    <div class="card" id="boostCard">
+      <h2>⚡ Request more GPUs ${badge("boost")}</h2>
+      <p class="muted">Kaggle-style multi-GPU training across free nodes. An admin approves it; the
+         grant powers <strong>one session</strong>. At 3 a.m. with nobody else active, that's the whole cluster.</p>
+      <div id="boostState"></div>
+      <label>GPU nodes wanted</label>
+      <select id="boostGpus"><option>1</option><option selected>2</option><option>3</option><option>4</option></select>
+      <label>Why (the admin sees this)</label>
+      <input id="boostReason" placeholder="e.g. fine-tuning a 7B model overnight" />
+      <div class="btn-row"><button id="boostBtn">Request boost</button></div>
+    </div>
+
     ${me.must_change_password ? `<div class="card" style="border-color:var(--warn)">
       ⚠️ <strong>Please change your password.</strong> This account is still using its
       initial password — set a new one below.</div>` : ""}
@@ -182,7 +259,11 @@ async function workspaceView() {
     try {
       const r = await api.launch(profile);
       window.open(r.url, "_blank", "noopener");
-      state.textContent = "Server starting — switch to the new tab for JupyterLab.";
+      const place = r.mode === "boost" ? `⚡ Boosted across ${r.gpus} GPU node(s)`
+        : r.shared ? `Sharing node ${r.node || ""} concurrently${r.queued ? " (queued for a dedicated node)" : ""}`
+        : r.node ? `Whole node ${r.node} — all yours` : "Server starting";
+      state.textContent = `${place}. Switch to the new tab for JupyterLab.`;
+      refreshCluster();
     } catch (e) { toast(e.message, "bad"); state.textContent = e.message; }
   };
   view.querySelector("#stop").onclick = async () => {
@@ -197,7 +278,67 @@ async function workspaceView() {
       workspaceView();
     } catch (e) { toast(e.message, "bad"); }
   };
+
+  // ---- boost request + live cluster polling ----
+  view.querySelector("#boostBtn").onclick = async () => {
+    try {
+      const gpus = parseInt(view.querySelector("#boostGpus").value, 10);
+      await api.requestBoost(gpus, view.querySelector("#boostReason").value.trim());
+      toast("Boost requested — an admin will review it.", "ok");
+      refreshBoostState();
+    } catch (e) { toast(e.message, "bad"); }
+  };
+  refreshBoostState();
+  refreshCluster();
+  if (wsTimer) clearInterval(wsTimer);
+  wsTimer = setInterval(refreshCluster, 7000);
+  // Deep link from the in-notebook "More GPUs" button.
+  if (location.hash.includes("boost=1")) view.querySelector("#boostCard").scrollIntoView();
+
   render2FA();
+}
+
+async function refreshBoostState() {
+  const el = view.querySelector("#boostState"); if (!el) return;
+  try {
+    const b = await api.myBoost();
+    if (!b) { el.innerHTML = ""; return; }
+    el.innerHTML = `<p class="muted">Latest request: ${badge(b.status)} · ${b.gpus} node(s)
+      ${b.status === "approved" ? "— launch your notebook to use it." : ""}</p>`;
+  } catch (_) {}
+}
+
+async function refreshCluster() {
+  const dot = document.getElementById("cl-dot"); if (!dot) return;
+  try {
+    const c = await api.cluster();
+    const you = c.you || {};
+    dot.className = `dot ${you.status || "idle"}`;
+    const st = document.getElementById("cl-status");
+    if (!you.active) st.textContent = `idle · ${c.active_users}/${c.total_nodes} nodes busy`;
+    else if (you.status === "boost") st.textContent = `BOOST · ${you.gpus} node(s) — all yours`;
+    else if (you.status === "shared") st.textContent = `${you.node} · sharing with ${you.sharing_with}`;
+    else st.textContent = `${you.node} · whole node (exclusive)`;
+    const chips = document.getElementById("cl-nodes");
+    chips.innerHTML = (c.nodes || []).map((n) => `<div class="nodechip ${n.you ? "you" : ""}">
+      <div class="h">${esc(n.hostname)} ${n.gpu ? "🎮" : ""}</div>
+      <div class="o">${n.draining ? "draining" : n.occupants + " active"}${n.you ? " · you" : ""}</div>
+    </div>`).join("") || `<span class="muted">No nodes registered (single-host mode).</span>`;
+  } catch (_) {}
+  try {
+    const r = await api.resources();
+    const setm = (id, fid, val, txt, pct) => {
+      const m = document.getElementById(id), f = document.getElementById(fid);
+      if (m) m.textContent = txt; if (f) f.style.width = `${Math.max(0, Math.min(100, pct || 0))}%`;
+    };
+    setm("m-gpu", "f-gpu", r.gpu_util, r.gpu_util == null ? "n/a" : `${r.gpu_util.toFixed(0)}%`, r.gpu_util);
+    const vramPct = r.vram_total ? (r.vram_used / r.vram_total) * 100 : 0;
+    setm("m-vram", "f-vram", r.vram_used, r.vram_used == null ? "n/a"
+      : `${(r.vram_used / 1024).toFixed(1)} GB`, vramPct);
+    setm("m-ram", "f-ram", r.ram_used_pct, r.ram_used_pct == null ? "n/a"
+      : `${r.ram_used_pct.toFixed(0)}%`, r.ram_used_pct);
+    setm("m-cpu", "f-cpu", r.cpu_pct, r.cpu_pct == null ? "n/a" : `${r.cpu_pct.toFixed(0)}%`, r.cpu_pct);
+  } catch (_) {}
 }
 
 function render2FA() {
@@ -244,7 +385,7 @@ async function refreshNbStatus(el) {
 }
 
 // --------------------------------------------------------------- admin views
-const adminTabs = ["Overview", "Approvals", "Users", "Nodes", "Sessions", "Monitoring", "Audit"];
+const adminTabs = ["Overview", "Approvals", "Boosts", "Users", "Nodes", "Sessions", "Monitoring", "Audit"];
 async function adminView(tab = "Overview") {
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   view.innerHTML = `
@@ -263,6 +404,7 @@ async function adminView(tab = "Overview") {
   try {
     if (tab === "Overview") await renderOverview(panel);
     else if (tab === "Approvals") await renderApprovals(panel);
+    else if (tab === "Boosts") await renderBoosts(panel);
     else if (tab === "Users") await renderUsers(panel);
     else if (tab === "Nodes") await renderNodes(panel);
     else if (tab === "Sessions") await renderSessions(panel);
@@ -360,6 +502,37 @@ async function renderApprovals(p) {
   });
 }
 
+async function renderBoosts(p) {
+  const list = await api.boosts("pending");
+  if (!list.length) { p.innerHTML = `<div class="card">No pending GPU-boost requests. ⚡</div>`; return; }
+  p.innerHTML = `<div class="card"><h2>GPU boost requests</h2>
+    <p class="muted">Approving grants Kaggle-style multi-GPU power for <strong>one session</strong>,
+       spread across whatever GPU nodes are free at launch.</p>
+    <table><thead><tr><th>User</th><th>Nodes</th><th>Reason</th><th>Requested</th><th>Action</th></tr></thead>
+    <tbody>${list.map((b) => `<tr data-id="${b.id}">
+      <td><strong>${esc(b.username)}</strong></td>
+      <td><select class="bgpus"><option ${b.gpus == 1 ? "selected" : ""}>1</option>
+        <option ${b.gpus == 2 ? "selected" : ""}>2</option>
+        <option ${b.gpus == 3 ? "selected" : ""}>3</option>
+        <option ${b.gpus == 4 ? "selected" : ""}>4</option></select></td>
+      <td class="muted">${esc(b.reason || "—")}</td>
+      <td class="muted">${new Date(b.created_at).toLocaleString()}</td>
+      <td><button class="ok approve">Approve</button> <button class="danger deny">Deny</button></td>
+    </tr>`).join("")}</tbody></table></div>`;
+  p.querySelectorAll("tr[data-id]").forEach((tr) => {
+    const id = tr.dataset.id;
+    tr.querySelector(".approve").onclick = async () => {
+      try { await api.approveBoost(id, parseInt(tr.querySelector(".bgpus").value, 10));
+        toast("Boost approved", "ok"); adminView("Boosts"); } catch (e) { toast(e.message, "bad"); }
+    };
+    tr.querySelector(".deny").onclick = async () => {
+      const reason = prompt("Reason for declining (optional):", "") || "";
+      try { await api.denyBoost(id, reason); toast("Boost denied", "ok"); adminView("Boosts"); }
+      catch (e) { toast(e.message, "bad"); }
+    };
+  });
+}
+
 async function renderUsers(p) {
   const list = await api.users();
   p.innerHTML = `<div class="card"><table><thead><tr>
@@ -403,14 +576,26 @@ async function renderUsers(p) {
 async function renderNodes(p) {
   const list = await api.nodes();
   if (!list.length) { p.innerHTML = `<div class="card">No nodes registered yet. Run the worker join script on each machine.</div>`; return; }
-  p.innerHTML = `<div class="card"><table><thead><tr>
-    <th>Host</th><th>IP</th><th>Role</th><th>Status</th><th>GPU</th><th>Last heartbeat</th>
-    </tr></thead><tbody>${list.map((n) => `<tr>
+  p.innerHTML = `<div class="card"><h2>Cluster nodes</h2>
+    <p class="muted">Drain a node before a reboot/service to stop new notebooks landing on it
+       (running notebooks are left alone).</p>
+    <table><thead><tr>
+    <th>Host</th><th>IP</th><th>Role</th><th>Status</th><th>GPU</th><th>Last heartbeat</th><th>Action</th>
+    </tr></thead><tbody>${list.map((n) => `<tr data-id="${n.id}">
       <td><strong>${esc(n.hostname)}</strong></td><td>${esc(n.ip)}</td>
       <td>${esc(n.role)}</td><td>${badge(n.status)}</td>
       <td>${n.labels && n.labels.gpu ? esc(n.labels.gpu) : "—"}</td>
       <td class="muted">${n.last_heartbeat ? new Date(n.last_heartbeat).toLocaleString() : "—"}</td>
+      <td>${n.status === "draining"
+        ? `<button class="ok activate">Activate</button>`
+        : `<button class="secondary drain">Drain</button>`}</td>
     </tr>`).join("")}</tbody></table></div>`;
+  p.querySelectorAll("tr[data-id]").forEach((tr) => {
+    const id = tr.dataset.id;
+    const d = tr.querySelector(".drain"), a = tr.querySelector(".activate");
+    if (d) d.onclick = async () => { try { await api.drainNode(id); toast("Node draining", "ok"); adminView("Nodes"); } catch (e) { toast(e.message, "bad"); } };
+    if (a) a.onclick = async () => { try { await api.activateNode(id); toast("Node active", "ok"); adminView("Nodes"); } catch (e) { toast(e.message, "bad"); } };
+  });
 }
 
 async function renderSessions(p) {
@@ -435,13 +620,23 @@ function renderMonitoring(p) {
 
 async function renderAudit(p) {
   const list = await api.audit(200);
-  p.innerHTML = `<div class="card"><h2>Audit log</h2>
+  p.innerHTML = `<div class="card"><h2>Audit log
+    <button class="secondary" id="csv" style="float:right">⬇ Export CSV</button></h2>
     <table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>IP</th></tr></thead>
     <tbody>${list.map((a) => `<tr>
       <td class="muted">${new Date(a.timestamp).toLocaleString()}</td>
       <td>${esc(a.actor_label)}</td><td>${esc(a.action)}</td>
       <td>${esc(a.target)}</td><td class="muted">${esc(a.ip)}</td></tr>`).join("")}
     </tbody></table></div>`;
+  p.querySelector("#csv").onclick = async () => {
+    try {
+      const blob = await api.auditExport();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "satyameba-audit.csv"; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) { toast(e.message, "bad"); }
+  };
 }
 
 // ------------------------------------------------------------------- router
@@ -451,7 +646,7 @@ async function bootstrapMe() {
   }
 }
 async function route() {
-  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+  clearTimers();
   await bootstrapMe();
   renderNav();
   const hash = location.hash || (me ? "#/app" : "#/login");
@@ -460,12 +655,15 @@ async function route() {
   if (hash.startsWith("#/login")) return me ? go("#/app") : loginView();
 
   if (!me) return go("#/login");
+  startNotifPoll();
 
   // Forced password change blocks everything else until done.
   if (me.must_change_password) return forcedChangeView();
 
+  if (hash.startsWith("#/notifications")) return showNotifications();
+
   if (hash.startsWith("#/admin")) {
-    if (me.role !== "admin") return go("#/app");
+    if (!isAdmin(me)) return go("#/app");
     const tab = hash.split("/")[2];
     const nice = adminTabs.find((t) => t.toLowerCase() === tab) || "Overview";
     return adminView(nice);
