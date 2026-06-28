@@ -48,6 +48,7 @@ fi
 
 # 1b. Configure the GPU runtime so this node advertises its GPUs to Swarm.
 if [[ $GPU -eq 1 ]]; then
+  command -v nvidia-ctk >/dev/null 2>&1 || { say "Installing NVIDIA Container Toolkit…"; bash scripts/setup_nvidia_toolkit.sh || say "toolkit install skipped (continuing)."; }
   say "Configuring NVIDIA GPU runtime…"
   bash scripts/setup_gpu_runtime.sh gpu || say "GPU runtime setup skipped/failed (continuing)."
 fi

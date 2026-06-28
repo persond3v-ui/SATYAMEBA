@@ -225,9 +225,29 @@ NFS export (or per-user volumes) for notebook contents.
 
 ## 14. GPU scheduling & the boost flow
 
-GPU notebooks need `SAT_GPU_ENABLED=true` and `scripts/setup_gpu_runtime.sh` on
-each GPU node (it advertises the GPU to Swarm **and** sets `default-runtime=nvidia`
-so concurrent-share notebooks can see the card). Then:
+**Prerequisite — the GPU stack (now auto-installed):** the setup wizard /
+`master_init.sh --gpu` / `worker_join.sh --gpu` now run
+`scripts/setup_nvidia_toolkit.sh` (installs the **NVIDIA Container Toolkit** on
+apt/dnf/yum/zypper and registers the runtime) followed by
+`scripts/setup_gpu_runtime.sh` (advertises the GPU to Swarm **and** sets
+`default-runtime=nvidia`). The one thing still on you is the **kernel driver**
+(needs a reboot, and Secure-Boot signing): RTX 5070 / Blackwell needs a **555+**
+driver — the toolkit script detects a missing driver and tells you the exact
+per-distro command.
+
+**Verify it actually works** (turns the design's assumptions into pass/fail):
+
+```bash
+sudo ./scripts/verify_gpu.sh
+```
+
+It checks the driver, `default-runtime=nvidia`, that `NVIDIA_VISIBLE_DEVICES=all`
+exposes the GPU (shared notebooks) while `=void` hides it (CPU notebooks stay
+off the card), and that the GPU is advertised to Swarm (exclusive reservation).
+Reference stack: driver ≥ 555, nvidia-container-toolkit ≥ 1.14, Docker ≥ 24,
+CUDA base image 12.x.
+
+Then:
 
 * **Exclusive vs. shared** is automatic — see *Scaling* in `CHARACTERISTICS.md`.
 * **Boost**: a user clicks **Request more GPUs** (SPA workspace, or the in-Lab

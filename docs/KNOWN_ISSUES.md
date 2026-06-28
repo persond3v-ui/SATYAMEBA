@@ -19,8 +19,15 @@ New capability work, with honest residual limits:
   widgets still work, so the notebook is never broken).
 - **🟢 GPU sharing on Swarm** — exclusive *reserves* the GPU; shared co-locates
   via node-pin + `NVIDIA_VISIBLE_DEVICES=all` with `default-runtime=nvidia`.
-  Single-host sharing is native; **the multi-node path needs validation on real
-  hardware** (driver/toolkit dependent). No MIG (consumer RTX 5070).
+  Single-host sharing is native. The multi-node path is now (a) auto-provisioned
+  — `setup_nvidia_toolkit.sh` installs the toolkit, `setup_gpu_runtime.sh` sets
+  `default-runtime=nvidia` + advertises the GPU — and (b) **checkable on
+  hardware** with `scripts/verify_gpu.sh` (driver, default-runtime, `all`-vs-`void`
+  gating, Swarm reservation). The **kernel driver** + reboot remain a host
+  prerequisite (RTX 5070 → 555+). No MIG (consumer Blackwell).
+- **🟢 GPU is one-button now (toolkit)** — the wizard/master/worker `--gpu` paths
+  install the NVIDIA Container Toolkit automatically; only the driver/reboot is
+  manual (genuinely can't be safely auto-done with Secure Boot).
 - **🟢 Cross-node multi-GPU (boost)** — `satyameba-ddp` wraps `torchrun` with the
   injected rendezvous; single-node multi-GPU works directly, **true cross-node
   DDP requires DDP-aware code + the rank agents reachable over the network**

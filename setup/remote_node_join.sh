@@ -61,8 +61,11 @@ say "This node's tailnet IP: $MY_TS"
 HOSTNAME_S="$(hostname)"
 GATEWAY="https://${MASTER_TS}"
 
-# 2. Configure GPU runtime (advertises the GPU + default-runtime=nvidia).
-[[ $GPU -eq 1 ]] && { say "Configuring GPU runtime…"; bash scripts/setup_gpu_runtime.sh gpu || true; }
+# 2. Configure GPU runtime (toolkit + advertises the GPU + default-runtime=nvidia).
+if [[ $GPU -eq 1 ]]; then
+  command -v nvidia-ctk >/dev/null 2>&1 || { say "Installing NVIDIA Container Toolkit…"; bash scripts/setup_nvidia_toolkit.sh || true; }
+  say "Configuring GPU runtime…"; bash scripts/setup_gpu_runtime.sh gpu || true
+fi
 
 # 3. Join the swarm OVER THE TAILNET (advertise/listen on the tailnet IP).
 if docker info 2>/dev/null | grep -q "Swarm: active"; then

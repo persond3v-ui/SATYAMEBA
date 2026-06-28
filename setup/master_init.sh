@@ -52,6 +52,7 @@ if [[ $NFS -eq 1 ]]; then
 fi
 
 if [[ $GPU -eq 1 ]] || command -v nvidia-smi >/dev/null 2>&1; then
+  command -v nvidia-ctk >/dev/null 2>&1 || { say "Installing NVIDIA Container Toolkit…"; bash scripts/setup_nvidia_toolkit.sh || say "toolkit install skipped (continuing)."; }
   say "Configuring NVIDIA GPU runtime for Swarm…"
   GPU_RES="$(grep '^SAT_GPU_RESOURCE=' .env | cut -d= -f2-)"; GPU_RES="${GPU_RES:-gpu}"
   bash scripts/setup_gpu_runtime.sh "$GPU_RES" || say "GPU runtime setup skipped/failed (continuing)."
