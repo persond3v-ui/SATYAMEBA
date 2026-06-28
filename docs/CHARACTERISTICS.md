@@ -99,8 +99,14 @@ These are **reservations**: Swarm places work by the requested footprint. The
   in `owner-setup/` — a control plane separate from the app. See
   [`../owner-setup/README.md`](../owner-setup/README.md).
 - **Private per-account storage**: folders named `u-<hash-of-immutable-id>`, strict
-  `0700`; a reused username can't inherit a deleted account's files. (Per-user
-  gocryptfs at-rest encryption is the remaining wiring.)
+  `0700`; a reused username can't inherit a deleted account's files.
+- **At-rest encryption (gocryptfs)**: with `SAT_USER_ENCRYPTION=gocryptfs`, the
+  disk only ever holds **ciphertext** (per-user keys derived from the owner KEK);
+  a host-side agent mounts the decrypted view only into the running notebook. A
+  stolen/pulled/decommissioned disk is unreadable; the owner crypto-erase
+  (shred the KEK) makes everything permanently unrecoverable instantly.
+  **Limit:** while a notebook runs, its view is decrypted (root on that node can
+  read *live* data) — it protects data **at rest**, not in use.
 - **Session-end teardown**: logout stops the notebook; idle-culler at 20 min.
 - **TOTP 2FA** (per-user, optionally mandatory for admins) and forced rotation of
   the seeded admin/owner password.

@@ -79,6 +79,11 @@ A separate, out-of-band layer that survives a hostile co-admin (`owner-setup/`):
   after a grace window (two-stage so a blip can't nuke the lab). Owner-triggered
   **panic** wipe too. *Crypto-erase destroys keys, not via slow overwrite; it is
   irreversible — disclose wipe-on-tamper to students for consent.*
+- **Per-user at-rest encryption** (`SAT_USER_ENCRYPTION=gocryptfs`) — each user's
+  data is on-disk **ciphertext** with a key derived from the owner KEK; a host
+  agent mounts the decrypted view only into the running notebook. A stolen/cold
+  disk is unreadable, and crypto-erase (shred the KEK) wipes it all instantly.
+  Protects **at rest**, not in use (a running node's view is plaintext to root).
 - **Physical hardening** (`harden_host.sh`) + LUKS/BIOS/TPM/Secure-Boot checklist.
 
 ## Additional hardening

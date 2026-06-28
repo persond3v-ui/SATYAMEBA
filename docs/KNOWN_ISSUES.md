@@ -39,6 +39,13 @@ New capability work, with honest residual limits:
 - **📌 Desktop `--purge`** — autodetected DE removal is mapped for common
   DE×distro combos; default stays the safe reversible boot-to-console. Some
   combos fall back to "console only" if no purge mapping exists.
+- **✅ At-rest encryption wired (was "remaining wiring")** — `SAT_USER_ENCRYPTION=
+  gocryptfs`: per-user cipherdirs (keys = HMAC(owner KEK, sid)), a host
+  `satyameba-cryptagent` mounts the decrypted view only into the running
+  notebook, the spawner binds that view, and crypto-erase shreds the KEK +
+  `gocryptfs.conf`. Protects data **at rest** (stolen/cold/decommissioned disk);
+  **in-use** data on a running node is still plaintext to root. Needs FUSE +
+  `user_allow_other`; **validate the bind-mount-of-FUSE on real hardware**.
 
 ## Second integration scan (new findings)
 

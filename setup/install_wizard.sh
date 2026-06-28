@@ -91,6 +91,7 @@ GPU=0; ui_yesno "Use an NVIDIA GPU on this machine?$([[ $DET_GPU -eq 1 ]] && ech
 NFS=0; [[ "$MODE" == "master" ]] && { ui_yesno "Share user storage across nodes via NFS (recommended for multi-node)?" 1 && NFS=1; }
 DO_SERVICES=0; ui_yesno "Install SATYAMEBA as boot services so it auto-starts on power-on?" 1 && DO_SERVICES=1
 DO_DESKTOP=0; ui_yesno "Uninstall the desktop to save RAM + run the neon console dashboard on the monitor? (reversible)" 0 && DO_DESKTOP=1
+DO_ENCRYPT=0; ui_yesno "Encrypt every user's data at rest (gocryptfs)? Strongly recommended for a shared lab — a stolen/pulled disk stays unreadable." 1 && DO_ENCRYPT=1
 
 DO_OWNER=0; SSHKEY=""; GRACE=30; ARM_WIPE=0
 if ui_yesno "Set up the OWNER break-glass control plane now (Tailscale tunnel + un-removable owner + tamper watchdog)?" 1; then
@@ -130,6 +131,15 @@ else
   add "Backend: secrets, scan, build images, deploy swarm" \
       "bash '$ROOT/setup/master_init.sh' --advertise-addr '$ADV' --domain '$DOMAIN' --users '$USERS' $([[ $GPU -eq 1 ]] && echo --gpu) $([[ $NFS -eq 1 ]] && echo --nfs)"
   SVCMODE="swarm"
+fi
+if [[ $DO_ENCRYPT -eq 1 ]]; then
+  if [[ "$SVCMODE" == "compose" ]]; then
+    REAPPLY="docker compose -f '$ROOT/docker-compose.yml' up -d"
+  else
+    REAPPLY="docker stack deploy -c '$ROOT/docker-compose.swarm.yml' satyameba"
+  fi
+  add "Encrypt user data at rest (gocryptfs)" \
+      "bash '$ROOT/setup/gocryptfs_setup.sh' && bash '$ROOT/scripts/set_env.sh' SAT_USER_ENCRYPTION gocryptfs '$ROOT/.env' && bash '$ROOT/scripts/set_env.sh' SAT_USER_STORAGE_MODE host '$ROOT/.env' && (set -a; . '$ROOT/.env'; set +a; $REAPPLY)"
 fi
 [[ $DO_SERVICES -eq 1 ]] && add "Install boot services$([[ $DO_DESKTOP -eq 1 ]] && echo ' + console TUI')" \
     "bash '$ROOT/setup/install_services.sh' --mode $SVCMODE $([[ $DO_DESKTOP -eq 1 ]] && echo --tui)"

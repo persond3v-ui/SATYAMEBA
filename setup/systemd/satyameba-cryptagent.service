@@ -1,0 +1,15 @@
+[Unit]
+Description=SATYAMEBA gocryptfs mount agent (per-user at-rest encryption)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+# Mounts each user's encrypted view on demand. Runs as root (FUSE mounts + the
+# owner keystore need it). Restarts forever so the cluster's encryption stays up.
+ExecStart=/usr/bin/env bash __ROOT__/setup/satyameba-cryptagent.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

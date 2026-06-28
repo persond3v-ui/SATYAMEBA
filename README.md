@@ -33,8 +33,11 @@ plug-n-play.
   **meaningless hashed name** (keyed to the immutable account id) and strict
   `0700` perms, so a re-used username can never inherit a deleted account's
   files. Encryption-at-rest is anchored by the owner keystore + crypto-erase
-  (`owner-setup/`); the per-user gocryptfs mount that turns it into on-disk
-  ciphertext is the remaining wiring (needs FUSE + on-hardware verification).
+  (`owner-setup/`). With **`SAT_USER_ENCRYPTION=gocryptfs`** each user's data is
+  stored as **on-disk ciphertext** (per-user keys derived from the owner KEK); a
+  host-side agent mounts the decrypted view only into the running notebook, so a
+  stolen/pulled disk is unreadable and the owner crypto-erase wipes everything
+  instantly. (Set up with `setup/gocryptfs_setup.sh`; verify on real hardware.)
 
 ### 👑 Owner control & break-glass
 - **Un-removable Owner role** (the project owner) — no admin can demote, suspend,

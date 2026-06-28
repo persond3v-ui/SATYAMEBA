@@ -325,3 +325,29 @@ The schema is **Alembic-managed**, so upgrades never lose or skip changes:
 
   CI runs `alembic check` — if you change a model without a migration, the build
   fails, so the schema and the code can't silently drift apart.
+
+## 18. Per-user at-rest encryption (gocryptfs)
+
+Encrypt each user's notebook data so the disk only ever holds ciphertext:
+
+```bash
+sudo ./setup/gocryptfs_setup.sh      # on each node: installs gocryptfs, KEK,
+                                      # cipher/plain bases, the mount agent
+./scripts/set_env.sh SAT_USER_ENCRYPTION gocryptfs
+./scripts/set_env.sh SAT_USER_STORAGE_MODE host
+# redeploy (compose: docker compose up -d  |  swarm: docker stack deploy ...)
+```
+
+The all-in-one wizard (`setup/install_wizard.sh`) offers this as a step.
+
+* Per-user keys are `HMAC(owner KEK, sid)` — all anchored to the one KEK in the
+  owner keystore, so the **crypto-erase** shreds the KEK + every `gocryptfs.conf`
+  and renders *all* user data permanently unreadable instantly.
+* The host `satyameba-cryptagent` mounts each user's **decrypted view** on demand
+  (and at boot); the notebook bind-mounts that view. The underlying disk/NFS only
+  holds ciphertext.
+* **Threat covered:** a stolen / pulled / decommissioned drive (powered off) is
+  unreadable. **Not covered:** while a notebook is running, its view is decrypted,
+  so root on *that* node can read live data — protect-at-rest, not in-use.
+* Needs FUSE + `user_allow_other` (the setup script enables it). Validate the
+  bind-mount-of-FUSE behaviour on your real hardware.

@@ -42,6 +42,11 @@ STORAGE_ENFORCE = os.environ.get("SAT_STORAGE_QUOTA_ENFORCE", "false").lower() =
 USER_STORAGE_MODE = os.environ.get("SAT_USER_STORAGE_MODE", "volume").lower()
 USER_HOST_BASE = os.environ.get("SAT_USER_HOST_BASE", "/srv/satyameba/users")
 SHARED_HOST_PATH = os.environ.get("SAT_SHARED_HOST_PATH", "/srv/satyameba/shared")
+# Per-user at-rest encryption (gocryptfs). When on, the disk only holds
+# ciphertext under SAT_CIPHER_BASE; the host-side cryptagent mounts a decrypted
+# view under SAT_PLAIN_BASE that the notebook bind-mounts. (host storage mode.)
+USER_ENCRYPTION = os.environ.get("SAT_USER_ENCRYPTION", "none").lower()  # none | gocryptfs
+PLAIN_BASE = os.environ.get("SAT_PLAIN_BASE", "/srv/satyameba/plain")
 NB_UID = int(os.environ.get("SAT_NB_UID", "1000"))
 NB_GID = int(os.environ.get("SAT_NB_GID", "100"))
 # Optional stronger sandbox runtime (e.g. "runsc" for gVisor). Empty = default.
@@ -74,7 +79,10 @@ def _storage_key(spawner) -> str:
 
 def _set_volumes(spawner, key: str) -> None:
     if USER_STORAGE_MODE == "host":
-        vols = {os.path.join(USER_HOST_BASE, key): "/home/jovyan/work"}
+        # With encryption on, bind the DECRYPTED gocryptfs view (the cryptagent
+        # mounts it); the underlying disk only ever holds ciphertext.
+        base = PLAIN_BASE if USER_ENCRYPTION == "gocryptfs" else USER_HOST_BASE
+        vols = {os.path.join(base, key): "/home/jovyan/work"}
         if SHARED_HOST_PATH:
             vols[SHARED_HOST_PATH] = {"bind": "/home/jovyan/shared", "mode": SHARED_MODE}
     else:
@@ -153,7 +161,18 @@ def pre_spawn_hook(spawner):
     # Per-account, hashed storage (meaningless name; immutable id).
     key = _storage_key(spawner)
     _set_volumes(spawner, key)
-    if USER_STORAGE_MODE == "host":
+    # Label the container with the storage id so the host cryptagent knows which
+    # user's encrypted view to mount (and for general ops visibility).
+    sid_label = (opts.get("sid") or key[2:])
+    labels = {"satyameba.sid": sid_label, "satyameba.user": spawner.user.name}
+    if SPAWNER == "swarm":
+        spawner.extra_container_spec = {**(getattr(spawner, "extra_container_spec", None) or {}),
+                                        "labels": labels}
+    else:
+        spawner.extra_create_kwargs = {**(getattr(spawner, "extra_create_kwargs", None) or {}),
+                                       "labels": labels}
+    if USER_STORAGE_MODE == "host" and USER_ENCRYPTION != "gocryptfs":
+        # When encryption is on, the cryptagent owns the (decrypted) mountpoint.
         try:
             d = os.path.join(USER_HOST_BASE, key)
             os.makedirs(d, exist_ok=True)
