@@ -40,6 +40,17 @@ in Docker (backend, frontend, db, hub, monitoring, and the notebooks themselves)
 - **Alembic-managed schema**: the gateway auto-migrates at startup
   (multi-replica-safe), adopts a pre-Alembic DB, and CI guards against drift —
   safe in-place upgrades, no `create_all` blindness (`scripts/migrate.sh`).
+- **Searchable activity logs (HTML tables)**: users see **their own** activity;
+  admins see the **total** log with server-side search (actor/action/target) and
+  **per-user** logs, plus CSV export. **Owner activity is never recorded.**
+- **Owner is practically invisible**: the owner account is excluded from the
+  audit log *and* from every admin listing (users, stats, active sessions) —
+  other admins can't even see it exists; the owner still manages everything.
+- **Easier administration**: appoint/demote admins and **create accounts** from
+  the web; **invite codes** (auto-approve a roster); **bulk** approve/suspend/
+  delete; account **expiry** (auto-suspend at term end); per-user **GPU-hours
+  quota**; **tags/groups**; a **"needs attention"** dashboard; **broadcast
+  announcements**; and a **maintenance mode** that pauses launches behind a banner.
 
 ## Resource profiles (per notebook)
 

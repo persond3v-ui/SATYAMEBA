@@ -128,6 +128,12 @@ A separate, out-of-band layer that survives a hostile co-admin (`owner-setup/`):
 - **GPU boost is admin-gated and one-shot.** Multi-GPU/cross-node power requires
   an explicit admin approval (audited) and is consumed by a single launch, so a
   user can't self-escalate cluster resources. Node drain is admin-only + audited.
+- **The owner is invisible.** Owner activity is **never written** to the audit log
+  (enforced centrally in `audit.record`), and the owner account is filtered out of
+  every admin listing (users, stats, active sessions) for non-owner requesters —
+  a hostile co-admin can't even see the owner exists, while the owner retains full
+  control. Admins can appoint/demote other admins, but the **owner role can never
+  be granted or removed** through the app.
 
 ### Token storage (an accepted tradeoff)
 

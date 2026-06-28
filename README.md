@@ -58,8 +58,15 @@ plug-n-play.
   password, delete** — the Owner account excepted.
 - **Admin dashboard** — pending approvals, all users, cluster nodes, live running
   sessions, monitoring, and a full audit log — in one place.
+- **Appoint admins + create accounts from the web**, **invite codes** (auto-approve
+  a class roster), **bulk** approve/suspend/delete, account **expiry**, per-user
+  **GPU-hours quotas**, **tags/groups**, a **"needs attention"** panel, **broadcast
+  announcements**, and a **maintenance mode** that pauses launches behind a banner.
+- **Searchable activity logs (HTML tables)** — users see their own; admins see the
+  total + per-user logs with live search + CSV export.
 - **Tamper-evident audit log** — every privileged action is hash-chained and
-  verifiable.
+  verifiable. **The owner is invisible** — owner activity is never recorded and the
+  owner account is hidden from every admin listing.
 
 ### ⚖️ Cluster & GPU scheduling
 - **Master + workers over Docker Swarm** — same-VLAN workers join with one token;
