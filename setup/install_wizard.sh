@@ -139,7 +139,7 @@ if [[ $DO_ENCRYPT -eq 1 ]]; then
     REAPPLY="docker stack deploy -c '$ROOT/docker-compose.swarm.yml' satyameba"
   fi
   add "Encrypt user data at rest (gocryptfs)" \
-      "bash '$ROOT/setup/gocryptfs_setup.sh' && bash '$ROOT/scripts/set_env.sh' SAT_USER_ENCRYPTION gocryptfs '$ROOT/.env' && bash '$ROOT/scripts/set_env.sh' SAT_USER_STORAGE_MODE host '$ROOT/.env' && (set -a; . '$ROOT/.env'; set +a; $REAPPLY)"
+      "bash '$ROOT/setup/gocryptfs_setup.sh' && bash '$ROOT/scripts/set_env.sh' SAT_USER_ENCRYPTION gocryptfs '$ROOT/.env' && bash '$ROOT/scripts/set_env.sh' SAT_USER_STORAGE_MODE host '$ROOT/.env' && (source '$ROOT/scripts/load_env.sh'; load_env '$ROOT/.env'; $REAPPLY)"
 fi
 [[ $DO_SERVICES -eq 1 ]] && add "Install boot services$([[ $DO_DESKTOP -eq 1 ]] && echo ' + console TUI')" \
     "bash '$ROOT/setup/install_services.sh' --mode $SVCMODE $([[ $DO_DESKTOP -eq 1 ]] && echo --tui)"

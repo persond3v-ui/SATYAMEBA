@@ -90,7 +90,7 @@ if [[ $GPU -eq 1 ]] || command -v nvidia-smi >/dev/null 2>&1; then
 fi
 
 say "Deploying stack 'satyameba'…"
-set -a; source .env; set +a
+source "$ROOT/scripts/load_env.sh"; load_env "$ROOT/.env"
 docker stack deploy -c docker-compose.swarm.yml satyameba
 
 WORKER_TOKEN="$(docker swarm join-token -q worker)"

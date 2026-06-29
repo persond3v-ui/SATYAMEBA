@@ -32,7 +32,7 @@ fi
 
 DOCKER="$(command -v docker || echo /usr/bin/docker)"
 if [[ "$MODE" == "swarm" ]]; then
-  START="/bin/sh -c 'set -a; . $ROOT/.env 2>/dev/null; set +a; $DOCKER stack deploy -c $ROOT/docker-compose.swarm.yml satyameba'"
+  START="/bin/bash -c 'source $ROOT/scripts/load_env.sh; load_env $ROOT/.env; $DOCKER stack deploy -c $ROOT/docker-compose.swarm.yml satyameba'"
   STOP="$DOCKER stack rm satyameba"
 else
   START="$DOCKER compose -f $ROOT/docker-compose.yml up -d"

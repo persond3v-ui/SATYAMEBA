@@ -16,7 +16,7 @@ while [[ $# -gt 0 ]]; do
   esac; shift
 done
 [[ -f .env ]] || { echo "no .env found"; exit 1; }
-set -a; source .env; set +a
+source "$ROOT/scripts/load_env.sh"; load_env "$ROOT/.env"
 
 # Find the Postgres container by image family (any tag), not an exact tag.
 CID="$(docker ps --format '{{.ID}} {{.Image}}' | awk '/postgres/ {print $1; exit}')"

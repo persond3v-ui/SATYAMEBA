@@ -28,6 +28,6 @@ if $COMPOSE ps gateway 2>/dev/null | grep -qiE "up|running"; then
 else
   echo "[migrate] locally (gateway/)…"
   cd "$ROOT/gateway"
-  set -a; [[ -f "$ROOT/.env" ]] && . "$ROOT/.env"; set +a
+  source "$ROOT/scripts/load_env.sh"; load_env "$ROOT/.env"
   alembic "$CMD" "${ARGS[@]}"
 fi

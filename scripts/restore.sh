@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 DIR="${1:-}"
 [[ -d "$DIR" && -f "$DIR/db.sql.gz" ]] || { echo "usage: $0 <backup-dir with db.sql.gz>"; exit 1; }
 [[ -f .env ]] || { echo "no .env — restore env.bak first: cp $DIR/env.bak .env"; exit 1; }
-set -a; source .env; set +a
+source "$ROOT/scripts/load_env.sh"; load_env "$ROOT/.env"
 
 CID="$(docker ps --format '{{.ID}} {{.Image}}' | awk '/postgres/ {print $1; exit}')"
 [[ -z "$CID" ]] && { echo "Postgres container not found."; exit 1; }

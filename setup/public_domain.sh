@@ -111,9 +111,9 @@ if [[ $HARDEN -eq 1 && -f "$ROOT/.env" ]]; then
   fi
   say "Redeploying with the hardened settings…"
   if docker info 2>/dev/null | grep -q "Swarm: active"; then
-    ( set -a; . "$ROOT/.env"; set +a; docker stack deploy -c "$ROOT/docker-compose.swarm.yml" satyameba ) || warn "redeploy had warnings"
+    ( source "$ROOT/scripts/load_env.sh"; load_env "$ROOT/.env"; docker stack deploy -c "$ROOT/docker-compose.swarm.yml" satyameba ) || warn "redeploy had warnings"
   else
-    ( set -a; . "$ROOT/.env"; set +a; docker compose -f "$ROOT/docker-compose.yml" up -d ) || warn "redeploy had warnings"
+    ( source "$ROOT/scripts/load_env.sh"; load_env "$ROOT/.env"; docker compose -f "$ROOT/docker-compose.yml" up -d ) || warn "redeploy had warnings"
   fi
   warn "Production mode is ON: API docs are disabled and the gateway fails closed"
   warn "if secrets are weak. Admins must now enrol TOTP 2FA. Consider Cloudflare"

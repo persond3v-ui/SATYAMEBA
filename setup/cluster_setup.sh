@@ -134,7 +134,7 @@ INTERNAL_SECRET="$(grep '^SAT_INTERNAL_SHARED_SECRET=' "$ROOT/.env" | cut -d= -f
 [[ $ENC -eq 1 ]] && { say "Enabling at-rest encryption on master…"; bash "$ROOT/setup/gocryptfs_setup.sh" >>"$LOG" 2>&1 \
   && bash "$ROOT/scripts/set_env.sh" SAT_USER_ENCRYPTION gocryptfs "$ROOT/.env" \
   && bash "$ROOT/scripts/set_env.sh" SAT_USER_STORAGE_MODE host "$ROOT/.env" \
-  && ( set -a; . "$ROOT/.env"; set +a; docker stack deploy -c "$ROOT/docker-compose.swarm.yml" satyameba >>"$LOG" 2>&1 ) || say "encryption step had warnings (see log)"; }
+  && ( source "$ROOT/scripts/load_env.sh"; load_env "$ROOT/.env"; docker stack deploy -c "$ROOT/docker-compose.swarm.yml" satyameba >>"$LOG" 2>&1 ) || say "encryption step had warnings (see log)"; }
 say "Setting up the un-removable OWNER + break-glass on the master (follow any Tailscale prompt)…"
 bash "$ROOT/owner-setup/owner_setup.sh" --role master --owner-username "$OWNER_USER" \
      --owner-email "$OWNER_EMAIL" --ssh-pubkey "${SAT_SSH_PUBKEY:-$HOME/.ssh/id_ed25519.pub}" 2>&1 | tee -a "$LOG" || say "owner setup had warnings (see log)"
